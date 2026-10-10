@@ -590,7 +590,10 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
                      .output = generated->image,
                      .format = swapchain.GetSurfaceFormat().format,
                      .width = frame->width,
-                     .height = frame->height});
+                     .height = frame->height,
+                     .current_view = frame->image_view,
+                     .hudless_view = hudless ? hudless->image_view : vk::ImageView{},
+                     .output_view = generated->image_view});
         if (recorded && frame_dump) {
             // BB_FRAME_DUMP_TRIGGER: the interpolated frame (between the previous game frame
             // and the dumped "output") and the game frame without the UI.

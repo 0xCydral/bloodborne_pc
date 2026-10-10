@@ -32,6 +32,10 @@ int Dlss::QualityForScale(float scale) {
 namespace {
 constexpr wchar_t BridgeName[] = L"bbport_dlss.dll";
 constexpr wchar_t NgxName[] = L"nvngx_dlss.dll";
+constexpr wchar_t NgxFrameGenName[] = L"nvngx_dlssg.dll";
+/// Bridges of abi 1 (Super Resolution only) still load; abi 2 added Frame Generation.
+constexpr u32 OldestBridgeAbi = 1;
+constexpr u32 FrameGenBridgeAbi = 2;
 
 std::filesystem::path ExecutableDirectory() {
     std::wstring path(MAX_PATH, L'\0');
@@ -44,10 +48,14 @@ void BridgeLog(int warning, const char* message) {
     std::printf("DLSS: %s%s\n", warning ? "warning: " : "", message);
 }
 
+/// Enables what the bridge asks for (Super Resolution's and Frame Generation's together) and the
+/// device has; false when something is missing. That is not fatal here: what it was for decides
+/// (NGX fails to start without Super Resolution's, Frame Generation turns itself off).
 bool CollectExtensions(const VkExtensionProperties* required, u32 count,
                        const std::vector<vk::ExtensionProperties>& available,
                        std::vector<std::string>& storage, std::vector<const char*>& enabled) {
     storage.clear();
+    bool all_found = true;
     for (u32 i = 0; i < count; ++i) {
         const auto& request = required[i];
         const auto match = std::ranges::find_if(available, [&](const auto& extension) {
@@ -56,7 +64,8 @@ bool CollectExtensions(const VkExtensionProperties* required, u32 count,
         });
         if (match == available.end()) {
             std::printf("DLSS: missing Vulkan extension %s\n", request.extensionName);
-            return false;
+            all_found = false;
+            continue;
         }
         storage.emplace_back(request.extensionName);
     }
@@ -65,7 +74,7 @@ bool CollectExtensions(const VkExtensionProperties* required, u32 count,
             enabled.push_back(name.c_str());
         }
     }
-    return true;
+    return all_found;
 }
 } // namespace
 
@@ -74,8 +83,10 @@ struct Dlss::Impl {
     const BbDlssApi* api{};
     std::vector<std::string> instance_extensions, device_extensions;
     std::optional<FeatureDesc> feature;
-    std::string problem;
+    std::optional<FrameGenDesc> frame_gen;
+    std::string problem, frame_gen_problem;
     bool eligible{true}, instance_ready{}, device_ready{}, initialized{}, available{};
+    bool frame_gen_dll{}, extensions_missing{}, frame_gen_available{};
 
     void Disable(std::string_view reason) {
         eligible = available = false;
@@ -114,10 +125,11 @@ Dlss::Dlss() : impl{std::make_unique<Impl>()} {
         impl->module ? reinterpret_cast<BbDlssGetApiFn>(GetProcAddress(impl->module, "BbDlssGetApi"))
                      : nullptr;
     impl->api = get_api ? get_api() : nullptr;
-    if (!impl->api || impl->api->abi != BBPORT_DLSS_BRIDGE_ABI) {
+    if (!impl->api || impl->api->abi < OldestBridgeAbi || impl->api->abi > BBPORT_DLSS_BRIDGE_ABI) {
         impl->Disable("bbport_dlss.dll is missing or from another version");
         return;
     }
+    impl->frame_gen_dll = std::filesystem::is_regular_file(directory / NgxFrameGenName);
     // NGX writes its logs and model updates here: beside the saves and shader caches.
     std::filesystem::path data = directory / "dlss";
     if (const char* user = std::getenv("BB_GPU_USER_DIR"); user && user[0]) {
@@ -144,9 +156,11 @@ void Dlss::AppendInstanceExtensions(std::vector<const char*>& enabled) {
         return impl->Disable("instance extension query failed");
     }
     const auto [result, extensions] = vk::enumerateInstanceExtensionProperties();
-    if (result != vk::Result::eSuccess ||
-        !CollectExtensions(required, count, extensions, impl->instance_extensions, enabled)) {
-        return impl->Disable("required Vulkan instance extensions are missing");
+    if (result != vk::Result::eSuccess) {
+        return impl->Disable("the Vulkan instance extensions could not be listed");
+    }
+    if (!CollectExtensions(required, count, extensions, impl->instance_extensions, enabled)) {
+        impl->extensions_missing = true;
     }
     impl->instance_ready = true;
 }
@@ -166,9 +180,11 @@ void Dlss::AppendDeviceExtensions(vk::Instance instance, vk::PhysicalDevice phys
         return impl->Disable("this GPU or driver does not support DLSS (GeForce RTX needed)");
     }
     const auto [result, extensions] = physical.enumerateDeviceExtensionProperties();
-    if (result != vk::Result::eSuccess ||
-        !CollectExtensions(required, count, extensions, impl->device_extensions, enabled)) {
-        return impl->Disable("required Vulkan device extensions are missing");
+    if (result != vk::Result::eSuccess) {
+        return impl->Disable("the Vulkan device extensions could not be listed");
+    }
+    if (!CollectExtensions(required, count, extensions, impl->device_extensions, enabled)) {
+        impl->extensions_missing = true;
     }
     impl->device_ready = true;
 }
@@ -185,6 +201,38 @@ void Dlss::Initialize(vk::Instance instance, vk::PhysicalDevice physical, vk::De
     }
     impl->available = true;
     std::printf("DLSS: ready\n");
+    DetectFrameGeneration();
+}
+
+void Dlss::DetectFrameGeneration() {
+    auto& problem = impl->frame_gen_problem;
+    if (impl->api->abi < FrameGenBridgeAbi) {
+        problem = "bbport_dlss.dll is from an older version";
+    } else if (!impl->frame_gen_dll) {
+        problem = "nvngx_dlssg.dll is not installed";
+    } else if (impl->extensions_missing) {
+        problem = "a Vulkan extension it needs is missing";
+    } else {
+        int32_t supported{}, init_result{};
+        if (!impl->api->FrameGenAvailable(&supported, &init_result)) {
+            problem = "NGX could not be asked";
+        } else if (!supported) {
+            char text[160];
+            std::snprintf(text, sizeof text,
+                          "needs a GeForce RTX 40 series or newer, a current NVIDIA driver and "
+                          "Windows hardware-accelerated GPU scheduling (NGX code 0x%08x)",
+                          unsigned(init_result));
+            problem = text;
+        } else {
+            impl->frame_gen_available = true;
+            problem.clear();
+        }
+    }
+    if (impl->frame_gen_available) {
+        std::printf("DLSS: Frame Generation available\n");
+    } else {
+        std::printf("DLSS: Frame Generation unavailable (%s)\n", problem.c_str());
+    }
 }
 
 bool Dlss::Available() const {
@@ -240,9 +288,81 @@ void Dlss::ReleaseFeature() {
     }
 }
 
+bool Dlss::FrameGenerationAvailable() const {
+    return impl->available && impl->frame_gen_available;
+}
+
+std::string Dlss::FrameGenerationProblem() const {
+    return impl->frame_gen_problem;
+}
+
+bool Dlss::CreateFrameGeneration(vk::CommandBuffer command, const FrameGenDesc& desc) {
+    if (!FrameGenerationAvailable()) {
+        return false;
+    }
+    impl->frame_gen.reset();
+    const BbDlssFrameGenFeature feature{desc.width, desc.height, static_cast<VkFormat>(desc.format),
+                                        desc.render_width, desc.render_height};
+    if (!impl->api->CreateFrameGen(command, &feature)) {
+        return false;
+    }
+    impl->frame_gen = desc;
+    return true;
+}
+
+bool Dlss::EvaluateFrameGeneration(vk::CommandBuffer command, const FrameGenFrame& frame) {
+    if (!FrameGenerationAvailable() || !impl->frame_gen || !frame.camera) {
+        return false;
+    }
+    const auto image = [](const Resource& r) {
+        const vk::ImageSubresourceRange range{r.aspect, 0, 1, 0, 1};
+        return BbDlssImage{r.image,
+                           r.view,
+                           static_cast<VkImageSubresourceRange>(range),
+                           static_cast<VkFormat>(r.format),
+                           r.width,
+                           r.height};
+    };
+    const FgCamera::Matrices& camera = *frame.camera;
+    BbDlssFrameGenEvaluate parameters{};
+    parameters.backbuffer = image(frame.backbuffer);
+    parameters.depth = image(frame.depth);
+    parameters.motion = image(frame.motion);
+    parameters.hudless = image(frame.hudless);
+    parameters.output = image(frame.output);
+    static_assert(sizeof(parameters.view_to_clip) == sizeof(camera.view_to_clip));
+    std::memcpy(parameters.view_to_clip, camera.view_to_clip.data(), sizeof(parameters.view_to_clip));
+    std::memcpy(parameters.clip_to_view, camera.clip_to_view.data(), sizeof(parameters.clip_to_view));
+    std::memcpy(parameters.clip_to_prev_clip, camera.clip_to_prev_clip.data(),
+                sizeof(parameters.clip_to_prev_clip));
+    std::memcpy(parameters.prev_clip_to_clip, camera.prev_clip_to_clip.data(),
+                sizeof(parameters.prev_clip_to_clip));
+    parameters.jitter_x = camera.jitter[0];
+    parameters.jitter_y = camera.jitter[1];
+    std::memcpy(parameters.camera_pos, camera.pos.data(), sizeof(parameters.camera_pos));
+    std::memcpy(parameters.camera_up, camera.up.data(), sizeof(parameters.camera_up));
+    std::memcpy(parameters.camera_right, camera.right.data(), sizeof(parameters.camera_right));
+    std::memcpy(parameters.camera_forward, camera.forward.data(), sizeof(parameters.camera_forward));
+    parameters.camera_near = camera.near_plane;
+    parameters.camera_far = camera.far_plane;
+    parameters.camera_fov = camera.fov;
+    parameters.camera_aspect = camera.aspect;
+    parameters.reset = frame.reset ? 1 : 0;
+    parameters.depth_inverted = 0; // the scene depth is 0 near, 1 far
+    return impl->api->EvaluateFrameGen(command, &parameters) != 0;
+}
+
+void Dlss::ReleaseFrameGeneration() {
+    impl->frame_gen.reset();
+    if (impl->api && impl->api->abi >= FrameGenBridgeAbi) {
+        impl->api->ReleaseFrameGen();
+    }
+}
+
 void Dlss::Shutdown() {
     impl->available = false;
     impl->feature.reset();
+    impl->frame_gen.reset();
     if (impl->api && impl->initialized) {
         impl->api->Shutdown();
         impl->initialized = false;
@@ -277,6 +397,20 @@ bool Dlss::Evaluate(vk::CommandBuffer, const Frame&) {
     return false;
 }
 void Dlss::ReleaseFeature() {}
+void Dlss::DetectFrameGeneration() {}
+bool Dlss::FrameGenerationAvailable() const {
+    return false;
+}
+std::string Dlss::FrameGenerationProblem() const {
+    return {};
+}
+bool Dlss::CreateFrameGeneration(vk::CommandBuffer, const FrameGenDesc&) {
+    return false;
+}
+bool Dlss::EvaluateFrameGeneration(vk::CommandBuffer, const FrameGenFrame&) {
+    return false;
+}
+void Dlss::ReleaseFrameGeneration() {}
 
 #endif
 

@@ -2095,6 +2095,10 @@ void TemporalUpscaler::CaptureForFrameGeneration(vk::Image depth, vk::ImageLayou
     }
     // The same sign convention as the upscaler dispatch (toggle 1 << 26 flips it).
     const float sign = BbToggle::Disabled(1u << 26) ? -1.0f : 1.0f;
+    const std::array<float, 2> frame_jitter{sign * jitter[0], sign * jitter[1]};
+    // DLSS frame generation's matrices of this frame (the previous camera is still the last frame's).
+    FgCamera::Matrices camera{};
+    const bool has_camera = camera_motion.FrameGenerationCamera({w, h}, frame_jitter, camera);
     frame_generation->CaptureScene({
         .depth = depth,
         .depth_layout = layout,
@@ -2102,11 +2106,14 @@ void TemporalUpscaler::CaptureForFrameGeneration(vk::Image depth, vk::ImageLayou
         .motion = vk::Image(motion_image),
         .width = w,
         .height = h,
-        .jitter = {sign * jitter[0], sign * jitter[1]},
+        .jitter = frame_jitter,
         .frame_ms = frame_ms,
         .camera_near = camera_motion.Near(),
         .camera_fov = camera_motion.VerticalFov(),
         .reset = was_reset,
+        .motion_view = *motion_view,
+        .camera = camera,
+        .has_camera = has_camera,
     });
 }
 

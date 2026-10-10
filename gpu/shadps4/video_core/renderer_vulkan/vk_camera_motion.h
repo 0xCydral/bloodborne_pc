@@ -10,6 +10,7 @@
 
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_vulkan/vk_fg_camera.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/texture_cache/image.h"
 
@@ -63,6 +64,11 @@ public:
     [[nodiscard]] float Near() const noexcept;
     // Current projection, previous projection, and row Z of previous-view * inverse-view.
     [[nodiscard]] std::array<std::array<float, 4>, 3> TaaDepthParameters() const noexcept;
+    /// DLSS frame generation's camera for the current frame (vk_fg_camera.h): the matrices from
+    /// the previous camera to this one, and the basis. `jitter` is the frame's viewport shift in
+    /// pixels of the `render` size. False when either camera is unknown.
+    [[nodiscard]] bool FrameGenerationCamera(std::array<u32, 2> render, std::array<float, 2> jitter,
+                                             FgCamera::Matrices& out) const noexcept;
     /// bbport: the matrices and jitter of the motion of this frame, printed with an upscaler dump
     /// (BB_DUMP_TRIGGER) for offline checks of the vectors.
     void PrintState(int frame) const;

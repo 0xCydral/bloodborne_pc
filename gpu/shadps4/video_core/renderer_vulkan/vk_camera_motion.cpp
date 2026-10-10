@@ -207,6 +207,16 @@ std::array<std::array<float, 4>, 3> CameraMotion::TaaDepthParameters() const noe
             {transform[8], transform[9], transform[10], transform[11]}};
 }
 
+bool CameraMotion::FrameGenerationCamera(std::array<u32, 2> render, std::array<float, 2> jitter_pixels,
+                                         FgCamera::Matrices& out) const noexcept {
+    if (!current.valid || !previous.valid || render[0] == 0 || render[1] == 0) {
+        return false;
+    }
+    out = FgCamera::Build({current.view, current.inv_view, current.proj},
+                          {previous.view, previous.inv_view, previous.proj}, render, jitter_pixels);
+    return true;
+}
+
 vk::ImageView CameraMotion::ObjectMotionView() const noexcept {
     return object_motion && object_motion->Enabled() ? object_motion->View() : vk::ImageView{};
 }

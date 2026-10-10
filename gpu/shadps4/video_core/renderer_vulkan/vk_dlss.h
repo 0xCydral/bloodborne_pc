@@ -5,7 +5,8 @@
 // dlss_bridge, MIT), loaded at run time from next to bb-probe.exe together with NVIDIA's
 // nvngx_dlss.dll. The port itself contains no NVIDIA code; without the DLLs, on other GPUs or
 // with BB_DLSS=0 nothing changes. Adapted from IFreemz/shadPS4-Bloodborne-DLSS-FSR
-// (vk_dlss_ngx).
+// (vk_dlss_ngx). DLSS Frame Generation (bridge abi 2, NVIDIA's nvngx_dlssg.dll) goes through the
+// same bridge; vk_frame_generation.cpp decides when it runs.
 
 #pragma once
 
@@ -15,6 +16,7 @@
 
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_vulkan/vk_fg_camera.h"
 
 namespace Vulkan {
 
@@ -65,8 +67,37 @@ public:
     bool Evaluate(vk::CommandBuffer command, const Frame& frame);
     void ReleaseFeature();
 
+    // ---- DLSS Frame Generation (GeForce RTX 40 and newer) ------------------------------------
+
+    /// After Initialize: NGX can run it here (bridge abi 2, nvngx_dlssg.dll, an RTX 40 or newer
+    /// GPU, a current driver, hardware-accelerated GPU scheduling, all Vulkan extensions).
+    [[nodiscard]] bool FrameGenerationAvailable() const;
+    /// Why it cannot (empty when it can, or before Initialize).
+    [[nodiscard]] std::string FrameGenerationProblem() const;
+
+    struct FrameGenDesc {
+        u32 width, height; ///< the backbuffer and the interpolated frame
+        vk::Format format; ///< the backbuffer's format
+        u32 render_width, render_height; ///< the depth and motion vectors
+        bool operator==(const FrameGenDesc&) const = default;
+    };
+    struct FrameGenFrame {
+        Resource backbuffer; ///< this frame as it is shown, with the UI
+        Resource depth, motion;
+        Resource hudless;    ///< the same without the UI; a null image leaves it out
+        Resource output;     ///< storage, the interpolated frame
+        const FgCamera::Matrices* camera;
+        bool reset;
+    };
+    /// Records the feature creation (`command` stays open). The GPU must be done with the previous
+    /// one.
+    bool CreateFrameGeneration(vk::CommandBuffer command, const FrameGenDesc& desc);
+    bool EvaluateFrameGeneration(vk::CommandBuffer command, const FrameGenFrame& frame);
+    void ReleaseFrameGeneration();
+
 private:
     Dlss();
+    void DetectFrameGeneration();
     struct Impl;
     std::unique_ptr<Impl> impl;
 };

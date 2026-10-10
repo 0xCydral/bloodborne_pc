@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: FSR 3.1 frame generation on top of the temporal upscaler (docs: README-Windows.txt).
+// bbport: frame generation on top of the temporal upscaler (docs: README-Windows.txt).
 //
 // One interpolated frame is shown between every two game frames. The port keeps its own
-// swapchain and presenter; this class drives the frame interpolation and optical flow compute
-// passes of the FSR-Vulkan portable library (ffx_vk_portable.h) and keeps what they need:
+// swapchain and presenter; this class makes the interpolated frame with one of two backends,
+// chosen for every frame (PlanFrame): NVIDIA DLSS Frame Generation (through the bridge DLL, vk_dlss.h)
+// when the upscaler is DLSS and NGX can run it here, else the frame interpolation and optical
+// flow compute passes of the FSR-Vulkan portable library (ffx_vk_portable.h). Capture, pacing and
+// presentation are the same for both. It keeps what they need:
 //
 //   * at the upscale (UpscalerFsr3/4/DLSS/XeSS/TAA, GPU command thread): the scene depth and the
 //     camera motion vectors of the frame, which the game overwrites before the frame is
@@ -29,6 +32,8 @@
 
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_vulkan/vk_dlss.h"
+#include "video_core/renderer_vulkan/vk_fg_camera.h"
 #include "video_core/texture_cache/image.h"
 
 struct FfxVkPortableFrameGenerationContext;
@@ -59,6 +64,10 @@ public:
         float frame_ms;
         float camera_near, camera_fov;
         bool reset; ///< the upscaler restarted its history with this frame
+        // DLSS Frame Generation only:
+        vk::ImageView motion_view{};
+        FgCamera::Matrices camera{};
+        bool has_camera = false;
     };
     /// The upscaler ran for this frame: copies the depth, notes the rest for PrepareFrame.
     void CaptureScene(const Scene& scene);
@@ -101,6 +110,8 @@ public:
         vk::Image output;   ///< the interpolated frame, to be written (any layout)
         vk::Format format;
         u32 width, height;
+        // Views of the three images (DLSS Frame Generation reads and writes through views).
+        vk::ImageView current_view{}, hudless_view{}, output_view{};
     };
     /// Records the optical flow, the interpolation preparation and the interpolation into
     /// `cmdbuf` (direct recording, after the frame's host passes). The image `output` is in
@@ -138,14 +149,27 @@ private:
         std::array<float, 2> jitter{};
         float frame_ms = 16.6f, camera_near = 0.05f, camera_fov = 1.0f;
         bool reset = false;
+        vk::ImageView motion_view{};
+        FgCamera::Matrices camera{};
+        bool has_camera = false;
         bool hudless = false;
         u32 hudless_width = 0, hudless_height = 0;
     };
 
+    enum class Backend { None, Amd, Dlss };
+
     void EnsureDepthCopy(vk::Format format, u32 width, u32 height);
     void EnsureHudless(vk::Format format, u32 width, u32 height);
+    /// The depth copy as a depth-only view, for NGX.
+    vk::ImageView DepthCopyView();
+    /// The backend for this frame: DLSS Frame Generation when the upscaler is DLSS and it can
+    /// run; otherwise AMD's. Says once per change why DLSS Frame Generation cannot run.
+    Backend ChooseBackend(vk::Format format);
     bool CreateContext(u32 width, u32 height, vk::Format format);
+    /// Frees the AMD context or the NGX feature (after the GPU is done with it).
     void DestroyContext();
+    bool RecordAmd(vk::CommandBuffer cmdbuf, const Targets& targets);
+    bool RecordDlss(vk::CommandBuffer cmdbuf, const Targets& targets);
     /// Logs a change of state once ("off (HDR output)").
     void Report(std::string_view state);
     /// Whether the base frame rate leaves room for a doubled one on this display.
@@ -159,6 +183,7 @@ private:
     Pending pending;
     Pending current; ///< the capture PrepareFrame is using
     VideoCore::UniqueImage depth_copy;
+    vk::UniqueImageView depth_copy_view;
     vk::Format depth_copy_format{};
     u32 depth_copy_width = 0, depth_copy_height = 0;
     VideoCore::UniqueImage hudless_raw;
@@ -171,7 +196,12 @@ private:
     std::vector<View> hudless_views;
 
     // Context (command thread).
-    FfxVkPortableFrameGenerationContext* context = nullptr;
+    Backend backend = Backend::None;
+    FfxVkPortableFrameGenerationContext* context = nullptr; ///< AMD
+    Dlss::FrameGenDesc dlss_desc{};  ///< DLSS: what the feature is (or will be) created for
+    bool dlss_created = false;       ///< the NGX feature exists (created in Record)
+    bool dlss_failed = false;        ///< NGX refused; AMD's until the switch is cycled
+    std::string dlss_note;           ///< why DLSS Frame Generation is not used, as last printed
     u32 context_width = 0, context_height = 0;
     vk::Format context_format{};
     vk::Format output_format{};

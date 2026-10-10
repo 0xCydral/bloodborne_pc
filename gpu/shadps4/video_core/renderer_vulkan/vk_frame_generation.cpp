@@ -18,7 +18,7 @@ namespace Vulkan {
 
 namespace {
 
-constexpr float kCameraFar = 3000.0f;
+constexpr float kCameraFar = FgCamera::kCameraFar;
 /// The library's effect calls recycle their image views after 8 calls and the interpolation
 /// makes two a frame: the GPU must have finished the frame three back before the next is recorded.
 constexpr size_t kFramesInFlight = 3;
@@ -56,6 +56,14 @@ void PrintIssues(const char* what, u64 issues) {
     std::printf("\n");
 }
 
+/// Images of `format` that a compute shader can write and the presentation then samples and copies.
+bool SupportsStorage(vk::PhysicalDevice physical, vk::Format format) {
+    const auto features = physical.getFormatProperties(format).optimalTilingFeatures;
+    return (features & vk::FormatFeatureFlagBits::eStorageImage) &&
+           (features & vk::FormatFeatureFlagBits::eSampledImage) &&
+           (features & vk::FormatFeatureFlagBits::eTransferSrc);
+}
+
 vk::ImageAspectFlags DepthAspects(vk::Format format) {
     const bool stencil = format == vk::Format::eD32SfloatS8Uint ||
                          format == vk::Format::eD24UnormS8Uint ||
@@ -87,6 +95,11 @@ FrameGeneration::~FrameGeneration() {
         ffxVkPortableFrameGenerationContextDestroy(context);
         context = nullptr;
     }
+    if (dlss_created) {
+        if (Dlss* dlss = Dlss::Get()) {
+            dlss->ReleaseFrameGeneration();
+        }
+    }
     for (const auto& entry : hudless_views) {
         instance.GetDevice().destroyImageView(entry.view);
     }
@@ -106,7 +119,7 @@ void FrameGeneration::EnsureDepthCopy(vk::Format format, u32 width, u32 height) 
         return;
     }
     // Earlier frames may still read the old one.
-    scheduler.DeferOperation([old = std::move(depth_copy)] {});
+    scheduler.DeferOperation([old = std::move(depth_copy), view = std::move(depth_copy_view)] {});
     const auto device = instance.GetDevice();
     depth_copy = VideoCore::UniqueImage(device, instance.GetAllocator());
     depth_copy.Create(vk::ImageCreateInfo{
@@ -124,6 +137,18 @@ void FrameGeneration::EnsureDepthCopy(vk::Format format, u32 width, u32 height) 
     depth_copy_width = width;
     depth_copy_height = height;
     // The interpolation context holds no reference to the image between frames.
+}
+
+vk::ImageView FrameGeneration::DepthCopyView() {
+    if (!depth_copy_view) {
+        depth_copy_view = Check(instance.GetDevice().createImageViewUnique({
+            .image = vk::Image(depth_copy),
+            .viewType = vk::ImageViewType::e2D,
+            .format = depth_copy_format,
+            .subresourceRange = {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1},
+        }));
+    }
+    return *depth_copy_view;
 }
 
 void FrameGeneration::EnsureHudless(vk::Format format, u32 width, u32 height) {
@@ -212,6 +237,9 @@ void FrameGeneration::CaptureScene(const Scene& scene) {
     pending.camera_near = scene.camera_near;
     pending.camera_fov = scene.camera_fov;
     pending.reset = scene.reset;
+    pending.motion_view = scene.motion_view;
+    pending.camera = scene.camera;
+    pending.has_camera = scene.has_camera;
 }
 
 void FrameGeneration::CaptureHudless(vk::Image image, vk::ImageLayout layout, vk::Format format,
@@ -284,14 +312,8 @@ bool FrameGeneration::CreateContext(u32 width, u32 height, vk::Format format) {
     }
     // The interpolated frame is written by a compute shader: storage support in the frame's
     // format, else RGBA8 (the swapchain blit converts).
-    const auto storage = [&](vk::Format candidate) {
-        const auto features = physical.getFormatProperties(candidate).optimalTilingFeatures;
-        return (features & vk::FormatFeatureFlagBits::eStorageImage) &&
-               (features & vk::FormatFeatureFlagBits::eSampledImage) &&
-               (features & vk::FormatFeatureFlagBits::eTransferSrc);
-    };
-    output_format = storage(format) ? format : vk::Format::eR8G8B8A8Unorm;
-    if (!storage(output_format)) {
+    output_format = SupportsStorage(physical, format) ? format : vk::Format::eR8G8B8A8Unorm;
+    if (!SupportsStorage(physical, output_format)) {
         Report("off (no storage image format for the interpolated frame)");
         return false;
     }
@@ -326,6 +348,7 @@ bool FrameGeneration::CreateContext(u32 width, u32 height, vk::Format format) {
     context_width = width;
     context_height = height;
     context_format = format;
+    backend = Backend::Amd;
     std::printf("Frame generation: on (AMD frame interpolation, %ux%u, interpolated frame %s, "
                 "optical flow)\n", width, height, vk::to_string(output_format).c_str());
     reported = "on";
@@ -333,14 +356,50 @@ bool FrameGeneration::CreateContext(u32 width, u32 height, vk::Format format) {
 }
 
 void FrameGeneration::DestroyContext() {
-    if (!context) {
-        return;
+    if (context || dlss_created) {
+        // Submitted work may still use the context's images or the NGX feature.
+        scheduler.Finish();
+        if (context) {
+            ffxVkPortableFrameGenerationContextDestroy(context);
+            context = nullptr;
+        }
+        if (dlss_created) {
+            dlss_created = false;
+            if (Dlss* dlss = Dlss::Get()) {
+                dlss->ReleaseFrameGeneration();
+            }
+        }
+        ticks.clear();
     }
-    // Submitted work may still use the context's images.
-    scheduler.Finish();
-    ffxVkPortableFrameGenerationContextDestroy(context);
-    context = nullptr;
-    ticks.clear();
+    backend = Backend::None;
+}
+
+FrameGeneration::Backend FrameGeneration::ChooseBackend(vk::Format format) {
+    if (BbSettings::Get().upscaler.load(std::memory_order_relaxed) != BbSettings::UpscalerDlss) {
+        dlss_note.clear();
+        return Backend::Amd;
+    }
+    std::string reason;
+    Dlss* dlss = Dlss::Get();
+    if (!dlss || !dlss->Available()) {
+        reason = "DLSS is not available";
+    } else if (!dlss->FrameGenerationAvailable()) {
+        reason = dlss->FrameGenerationProblem();
+    } else if (!SupportsStorage(instance.GetPhysicalDevice(), format)) {
+        reason = "the frame format has no storage image support";
+    } else if (dlss_failed) {
+        reason = "NGX refused it";
+    }
+    if (reason.empty()) {
+        dlss_note.clear();
+        return Backend::Dlss;
+    }
+    if (reason != dlss_note) {
+        dlss_note = reason;
+        std::printf("Frame generation: DLSS Frame Generation unavailable (%s); using AMD frame "
+                    "interpolation\n", reason.c_str());
+    }
+    return Backend::Amd;
 }
 
 bool FrameGeneration::Idle() {
@@ -384,6 +443,8 @@ FrameGeneration::Plan FrameGeneration::PlanFrame(u32 width, u32 height, vk::Form
             was_requested = false;
             DestroyContext();
             failed = false;
+            dlss_failed = false;
+            dlss_note.clear();
             idle = false;
             history_broken = true;
         }
@@ -397,9 +458,12 @@ FrameGeneration::Plan FrameGeneration::PlanFrame(u32 width, u32 height, vk::Form
     if (!was_requested) {
         was_requested = true;
         failed = false;
+        dlss_failed = false;
         history_broken = true;
     }
-    if (failed) {
+    // DLSS Frame Generation or AMD's, for this frame; a change destroys the old one below.
+    const Backend wanted = ChooseBackend(format);
+    if (failed && wanted == Backend::Amd) {
         skipped.fetch_add(1, std::memory_order_relaxed);
         return plan;
     }
@@ -420,18 +484,43 @@ FrameGeneration::Plan FrameGeneration::PlanFrame(u32 width, u32 height, vk::Form
         skipped.fetch_add(1, std::memory_order_relaxed);
         return plan;
     }
-    if (!context || context_width != width || context_height != height ||
-        context_format != format) {
-        if (context) {
-            DestroyContext();
-        }
-        if (!CreateContext(width, height, format)) {
-            failed = true;
+    if (wanted == Backend::Dlss) {
+        if (!current.has_camera || !current.motion_view) {
+            // No matrices for this frame: nothing for NGX to work from.
+            history_broken = true;
+            skipped.fetch_add(1, std::memory_order_relaxed);
             return plan;
         }
-        history_broken = true;
-    } else if (reported != "on") {
-        Report("on");
+        const Dlss::FrameGenDesc desc{width, height, format, current.width, current.height};
+        if (backend != Backend::Dlss || !(desc == dlss_desc)) {
+            // AMD's context, or a feature for other sizes: the NGX one is made in Record, where
+            // a command buffer is open.
+            DestroyContext();
+            backend = Backend::Dlss;
+            dlss_desc = desc;
+            output_format = format;
+            history_broken = true;
+        } else if (dlss_created && reported != "on") {
+            Report("on");
+        }
+    } else {
+        if (backend == Backend::Dlss) {
+            DestroyContext();
+            history_broken = true;
+        }
+        if (!context || context_width != width || context_height != height ||
+            context_format != format) {
+            if (context) {
+                DestroyContext();
+            }
+            if (!CreateContext(width, height, format)) {
+                failed = true;
+                return plan;
+            }
+            history_broken = true;
+        } else if (reported != "on") {
+            Report("on");
+        }
     }
     if (Idle()) {
         history_broken = true;
@@ -471,6 +560,88 @@ FrameGeneration::Hudless FrameGeneration::HudlessView(vk::Format view_format) {
 }
 
 bool FrameGeneration::Record(vk::CommandBuffer cmdbuf, const Targets& targets) {
+    return backend == Backend::Dlss ? RecordDlss(cmdbuf, targets) : RecordAmd(cmdbuf, targets);
+}
+
+bool FrameGeneration::RecordDlss(vk::CommandBuffer cmdbuf, const Targets& targets) {
+    Dlss* dlss = Dlss::Get();
+    // NGX refused: AMD's frame interpolation from the next frame (PlanFrame), no game restart.
+    const auto refused = [&](const char* what) {
+        std::printf("Frame generation: DLSS Frame Generation %s failed\n", what);
+        dlss_failed = true;
+        return false;
+    };
+    if (!dlss) {
+        return refused("is not loaded");
+    }
+    const auto all = vk::PipelineStageFlagBits2::eAllCommands;
+    // The host passes of the frame (and the last interpolation's reads) come first.
+    const vk::MemoryBarrier2 before{
+        .srcStageMask = all,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
+        .dstStageMask = all,
+        .dstAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
+    };
+    const vk::ImageMemoryBarrier2 output_to_general{
+        .srcStageMask = all,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+        .dstStageMask = all,
+        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+        .oldLayout = vk::ImageLayout::eUndefined,
+        .newLayout = vk::ImageLayout::eGeneral,
+        .image = targets.output,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1,
+                             .pMemoryBarriers = &before,
+                             .imageMemoryBarrierCount = 1,
+                             .pImageMemoryBarriers = &output_to_general});
+
+    if (!dlss_created) {
+        if (!dlss->CreateFrameGeneration(cmdbuf, dlss_desc)) {
+            return refused("creation");
+        }
+        dlss_created = true;
+        std::printf("Frame generation: on (NVIDIA DLSS Frame Generation, %ux%u, render %ux%u)\n",
+                    dlss_desc.width, dlss_desc.height, dlss_desc.render_width,
+                    dlss_desc.render_height);
+        reported = "on";
+    }
+
+    // Everything is General: the host passes leave the images there, the depth copy and the
+    // motion vectors are put there by their capture and the upscaler.
+    constexpr auto color = vk::ImageAspectFlagBits::eColor;
+    const bool hudless = bool(targets.hudless);
+    const Dlss::FrameGenFrame frame{
+        .backbuffer = {targets.current, targets.current_view, targets.format, color, targets.width,
+                       targets.height},
+        .depth = {vk::Image(depth_copy), DepthCopyView(), depth_copy_format,
+                  vk::ImageAspectFlagBits::eDepth, depth_copy_width, depth_copy_height},
+        .motion = {current.motion, current.motion_view, vk::Format::eR16G16Sfloat, color,
+                   current.width, current.height},
+        .hudless = hudless ? Dlss::Resource{targets.hudless, targets.hudless_view, targets.format,
+                                            color, targets.width, targets.height}
+                           : Dlss::Resource{},
+        .output = {targets.output, targets.output_view, output_format, color, targets.width,
+                   targets.height},
+        .camera = &current.camera,
+        .reset = reset_frame,
+    };
+    if (!dlss->EvaluateFrameGeneration(cmdbuf, frame)) {
+        return refused("evaluation");
+    }
+    ++frame_id;
+    const vk::MemoryBarrier2 after{
+        .srcStageMask = all,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+        .dstStageMask = all,
+        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &after});
+    return true;
+}
+
+bool FrameGeneration::RecordAmd(vk::CommandBuffer cmdbuf, const Targets& targets) {
     const auto all = vk::PipelineStageFlagBits2::eAllCommands;
     const bool hudless = bool(targets.hudless);
     // The host passes of the frame (and the last interpolation's reads) come first.
