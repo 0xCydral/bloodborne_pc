@@ -129,6 +129,13 @@ Frame generation (optional)
   frame interpolation and optical flow, driven by the game's depth and motion vectors, and it
   works with every upscaler (FSR 4, FSR 4.1.1, FSR 3.1, DLSS, XeSS or TAA). The HUD of the game
   frame is kept over the interpolated frame, so it does not smear. Default: off.
+- With DLSS as the upscaler on a GeForce RTX 40 series or newer, the interpolated frame comes
+  from NVIDIA DLSS Frame Generation instead ("Frame generation: on (NVIDIA DLSS Frame
+  Generation, ...)" in the log). It needs a current driver, Windows hardware-accelerated GPU
+  scheduling (Settings -> System -> Display -> Graphics) and bin\nvngx_dlssg.dll. Without any of
+  these the log says "DLSS Frame Generation unavailable (reason); using AMD frame interpolation"
+  and AMD's runs, as it does with every other upscaler. It is the same switch, with the same
+  pacing, frame cap and input lag; there is no multi-frame generation.
 - It costs input lag: the game frame is shown about half a frame interval later than without
   it. Best with at least 60 FPS before generation; below that the interpolated frames show
   more artifacts and the lag is more noticeable.
@@ -193,6 +200,10 @@ Credits
 - ReShade, which the optional post-processing uses: crosire/reshade 6.8.0, BSD-3-Clause, unmodified,
   in bin\reshade\ (https://reshade.me). Effects by CeeJay.dk (SweetFX, MIT), AMD (FidelityFX CAS, MIT)
   and haasn/JPulowski (Deband, MIT); licenses: licenses\ReShade-*.txt.
+- NVIDIA DLSS (Super Resolution and Frame Generation): bin\nvngx_dlss.dll and bin\nvngx_dlssg.dll,
+  unmodified and redistributed under NVIDIA's license (licenses\NVIDIA-DLSS-LICENSE.txt), loaded
+  through bin\bbport_dlss.dll (MIT; licenses\bbport_dlss-LICENSE.txt). NVIDIA, GeForce RTX and
+  DLSS are trademarks of NVIDIA Corporation.
 - AMD FidelityFX SDK (FSR 3.1, FSR 4) and FireBurn's FSR-Vulkan port of it, both MIT, built into the
   game's GPU library; licenses: licenses\AMD-FidelityFX-SDK-LICENSE.txt and
   licenses\FireBurn-FSR-Vulkan-LICENSE.txt.

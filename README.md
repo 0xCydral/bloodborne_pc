@@ -307,7 +307,7 @@ This fork brings together the work of several people and adds a few things of it
 | This fork | Support for *The Old Hunters* DLC license (experimental) |
 | This fork | A redesigned launcher with Simple and Advanced modes and animations |
 | This fork | Install from PKG: the launcher installs the game from your PS4 `.pkg` files (base game, update and DLC) |
-| This fork | Frame generation: AMD FidelityFX frame interpolation on top of any upscaler (FSR 4, FSR 3.1, DLSS or XeSS), about twice the frames on screen from a 60 FPS base, with the HUD kept sharp |
+| This fork | Frame generation: AMD FidelityFX frame interpolation on top of any upscaler (FSR 4, FSR 3.1, DLSS or XeSS), about twice the frames on screen from a 60 FPS base, with the HUD kept sharp. With DLSS on a GeForce RTX 40 series or newer, NVIDIA DLSS Frame Generation makes the extra frame instead |
 | This fork | Intel XeSS (SDK 3.0.2) as an upscaler for AMD, Intel and NVIDIA GPUs with DP4a support, and a launcher that greys out the upscalers a GPU cannot run, with the reason |
 | This fork | ReShade 6.8 with two Bloodborne presets (Natural and Vivid), switched on from the launcher |
 | This fork | Shaders compiled ahead of the frame on the draw-preparation threads, and the driver's pipeline cache saved between runs: fewer first-time stutters |
@@ -319,7 +319,7 @@ This fork brings together the work of several people and adds a few things of it
 
 | Upscaler | GPUs | Notes |
 |---|---|---|
-| **DLSS** | NVIDIA GeForce RTX 20 series and newer | Needs a current driver. Greyed out on other GPUs. |
+| **DLSS** | NVIDIA GeForce RTX 20 series and newer | Needs a current driver. Greyed out on other GPUs. On an RTX 40 series or newer with hardware-accelerated GPU scheduling on, the *Frame generation* switch uses NVIDIA DLSS Frame Generation; other setups keep AMD's frame interpolation. |
 | **FSR 3.1** | Every Vulkan 1.3 GPU | The fallback for everything else. |
 | **FSR 4** (INT8, model v07) | GPUs with the required Vulkan shader features, RDNA2 and RDNA3 included | The assets are in the Windows package. GPUs without the features fall back to FSR 3.1 by themselves. |
 | **FSR 4.1.1** | INT8 on any GPU with the required shader features, FP8 on AMD RDNA4 (RX 9000) | Linux: built from your own AMD DLL. See [FSR 4.1.1](#fsr-411-from-your-own-dll). Windows (experimental): through the fsr4vk provider, see [below](#fsr-411-on-windows-experimental). |
@@ -642,7 +642,7 @@ The Windows build also uses: [magic_enum](https://github.com/Neargye/magic_enum)
 
 The launcher is frozen with [PyInstaller](https://pyinstaller.org) and the icon is drawn with [Pillow](https://python-pillow.org). FSR 4 assets for the in-launcher download come from [FireBurn/Q2RTX](https://github.com/FireBurn/Q2RTX). The Windows guest memory layout follows the placeholder approach of shadPS4's Windows memory manager.
 
-DLSS runs through `bbport_dlss.dll` (`gpu/dlss_bridge`, MIT), adapted from the DLSS bridge of [IFreemz/shadPS4-Bloodborne-DLSS-FSR](https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR) and built against the [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS). NVIDIA's `nvngx_dlss.dll` is redistributed under its license (`licenses/NVIDIA-DLSS-LICENSE.txt` in the package). NVIDIA, GeForce RTX and DLSS are trademarks of NVIDIA Corporation. The port itself contains no NVIDIA code.
+DLSS runs through `bbport_dlss.dll` (`gpu/dlss_bridge`, MIT), adapted from the DLSS bridge of [IFreemz/shadPS4-Bloodborne-DLSS-FSR](https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR) and built against the [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS). NVIDIA's `nvngx_dlss.dll` and `nvngx_dlssg.dll` (DLSS Frame Generation) are redistributed under its license (`licenses/NVIDIA-DLSS-LICENSE.txt` in the package). NVIDIA, GeForce RTX and DLSS are trademarks of NVIDIA Corporation. The port itself contains no NVIDIA code.
 
 The Bloodborne-style icon is original artwork, not taken from the game.
 

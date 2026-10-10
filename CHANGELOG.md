@@ -6,6 +6,10 @@ The release pages for 1.6 to 1.6.15 were deleted on 2026-10-09. The git tags rem
 
 ## [1.7.1] - 2026-10-10
 
+### Added
+
+- NVIDIA DLSS Frame Generation. With the Frame generation switch on and DLSS as the upscaler, the extra frame between two game frames now comes from DLSS Frame Generation instead of AMD's frame interpolation. It needs a GeForce RTX 40 series or newer, a current driver, Windows hardware-accelerated GPU scheduling (Settings > System > Display > Graphics) and `nvngx_dlssg.dll` next to `nvngx_dlss.dll`, which the package now carries. When any of that is missing, or the upscaler is another one, AMD's frame interpolation runs as before, and the log says which one it is: `Frame generation: on (NVIDIA DLSS Frame Generation, ...)` or `Frame generation: DLSS Frame Generation unavailable (reason); using AMD frame interpolation`. The switch, the pacing and the frame cap rules are the same for both. The bridge DLL is ABI 2; a bridge DLL of ABI 1 still works for DLSS Super Resolution. Built against NVIDIA's DLSS SDK 310.9.1 and run on a GeForce RTX 4070 outside the game (feature creation and four evaluations on test images); not yet seen in the game.
+
 ### Changed
 
 - The frame generation switch is called "Frame generation" in the launcher and the in-game menu. Its old name, "Frame generation (FSR 3.1)", made it look like it switched the upscaler to FSR 3.1; it works on top of every upscaler, FSR 4 and 4.1.1 included. The log names it AMD frame interpolation.
