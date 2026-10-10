@@ -9,6 +9,7 @@
 #include <array>
 #include <cfloat>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -93,7 +94,13 @@ int32_t Configure(const wchar_t* dll_directory, const wchar_t* data_directory, B
     state.data_directory = data_directory ? data_directory : L".";
     state.dll_path = state.dll_directory.c_str();
     state.common.PathListInfo = {&state.dll_path, 1};
-    state.common.LoggingInfo = {NgxLog, NVSDK_NGX_LOGGING_LEVEL_OFF, false};
+    // BB_NGX_LOG=1 (or 2, verbose) sends NGX's own log lines to the game log.
+    const char* log_level = std::getenv("BB_NGX_LOG");
+    const NVSDK_NGX_Logging_Level level = !log_level || log_level[0] == '0'
+                                              ? NVSDK_NGX_LOGGING_LEVEL_OFF
+                                          : log_level[0] == '2' ? NVSDK_NGX_LOGGING_LEVEL_VERBOSE
+                                                                : NVSDK_NGX_LOGGING_LEVEL_ON;
+    state.common.LoggingInfo = {NgxLog, level, false};
     state.discovery.SDKVersion = NVSDK_NGX_Version_API;
     state.discovery.FeatureID = NVSDK_NGX_Feature_SuperSampling;
     state.discovery.Identifier.IdentifierType = NVSDK_NGX_Application_Identifier_Type_Project_Id;
