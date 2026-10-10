@@ -131,6 +131,9 @@ if [[ -d fsr4_shaders ]]; then cp -r fsr4_shaders "$dest/"; fi
 # (packaging/windows/build_dlss.sh). Without them the DLSS option stays unavailable.
 if [[ -f out/bbport_dlss.dll && -f out/nvngx_dlss.dll ]]; then
     cp out/bbport_dlss.dll out/nvngx_dlss.dll "$dest/bin/"
+    # DLSS Frame Generation is optional: without nvngx_dlssg.dll it reports unavailable and the
+    # port uses AMD's frame interpolation. NVIDIA's one license file covers both DLLs.
+    if [[ -f out/nvngx_dlssg.dll ]]; then cp out/nvngx_dlssg.dll "$dest/bin/"; fi
     mkdir -p "$dest/licenses" && cp out/NVIDIA-DLSS-LICENSE.txt "$dest/licenses/"
     cp gpu/dlss_bridge/LICENSE.txt "$dest/licenses/bbport_dlss-LICENSE.txt"
 else

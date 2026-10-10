@@ -369,7 +369,9 @@ static void load_upscaler_dlls(Dlls *dlls, const char **list, uint32_t *count) {
     BbDlssGetApiFn get_api =
         bridge && ngx ? (BbDlssGetApiFn)(void *)GetProcAddress(bridge, "BbDlssGetApi") : NULL;
     const BbDlssApi *api = get_api ? get_api() : NULL;
-    if (!api || api->abi != BBPORT_DLSS_BRIDGE_ABI) return;
+    /* ABI 1 is Super Resolution only, 2 adds Frame Generation (not probed here: its Vulkan
+     * extensions come with the device ones DLSS already checks). */
+    if (!api || api->abi < 1 || api->abi > BBPORT_DLSS_BRIDGE_ABI) return;
     wchar_t folder[MAX_PATH + 32], data[MAX_PATH + 32];
     DWORD length = GetModuleFileNameW(NULL, folder, MAX_PATH);
     while (length && folder[length - 1] != L'\\') --length;
