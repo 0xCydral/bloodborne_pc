@@ -176,6 +176,23 @@ private:
     bool Idle();
     void PrintStats(std::chrono::steady_clock::time_point now);
 
+    // BB_FG_TIMING=1: CPU time of the NGX calls and GPU time of the DLSS evaluation, per 5 s.
+    struct Timing {
+        static constexpr u32 kSlots = 8;
+        bool enabled = false;
+        bool checked = false;
+        vk::UniqueQueryPool pool;
+        double period_ns = 1.0;
+        std::array<bool, kSlots> used{};
+        u32 evals = 0, gpu_samples = 0;
+        double cpu_sum = 0, cpu_max = 0, gpu_sum = 0, gpu_max = 0, create_ms = 0;
+        std::chrono::steady_clock::time_point window{};
+    };
+    /// Reads the slot's old result, then writes the first timestamp of this evaluation.
+    void TimingBegin(vk::CommandBuffer cmdbuf);
+    void TimingEnd(vk::CommandBuffer cmdbuf, double cpu_ms);
+    Timing timing;
+
     const Instance& instance;
     Scheduler& scheduler;
 

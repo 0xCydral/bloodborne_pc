@@ -563,6 +563,68 @@ bool FrameGeneration::Record(vk::CommandBuffer cmdbuf, const Targets& targets) {
     return backend == Backend::Dlss ? RecordDlss(cmdbuf, targets) : RecordAmd(cmdbuf, targets);
 }
 
+void FrameGeneration::TimingBegin(vk::CommandBuffer cmdbuf) {
+    if (!timing.checked) {
+        timing.checked = true;
+        const char* env = std::getenv("BB_FG_TIMING");
+        timing.enabled = env && env[0] == '1';
+        if (timing.enabled) {
+            const auto device = instance.GetDevice();
+            timing.pool = Check(device.createQueryPoolUnique({
+                .queryType = vk::QueryType::eTimestamp,
+                .queryCount = Timing::kSlots * 2,
+            }));
+            device.resetQueryPool(*timing.pool, 0, Timing::kSlots * 2);
+            timing.period_ns = instance.GetPhysicalDevice().getProperties().limits.timestampPeriod;
+            timing.window = std::chrono::steady_clock::now();
+            std::printf("FG timing: on (timestamp period %.2f ns)\n", timing.period_ns);
+        }
+    }
+    if (!timing.enabled) {
+        return;
+    }
+    const u32 slot = u32(frame_id % Timing::kSlots);
+    const auto device = instance.GetDevice();
+    if (timing.used[slot]) {
+        // Used kSlots evaluations ago: the frames in flight are far fewer, so it is finished.
+        u64 stamps[2]{};
+        if (device.getQueryPoolResults(*timing.pool, slot * 2, 2, sizeof(stamps), stamps,
+                                       sizeof(u64), vk::QueryResultFlagBits::e64) ==
+            vk::Result::eSuccess) {
+            const double ms = double(stamps[1] - stamps[0]) * timing.period_ns / 1e6;
+            timing.gpu_sum += ms;
+            timing.gpu_max = std::max(timing.gpu_max, ms);
+            ++timing.gpu_samples;
+        }
+    }
+    device.resetQueryPool(*timing.pool, slot * 2, 2);
+    timing.used[slot] = true;
+    cmdbuf.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, *timing.pool, slot * 2);
+}
+
+void FrameGeneration::TimingEnd(vk::CommandBuffer cmdbuf, double cpu_ms) {
+    if (!timing.enabled) {
+        return;
+    }
+    const u32 slot = u32(frame_id % Timing::kSlots);
+    cmdbuf.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, *timing.pool, slot * 2 + 1);
+    ++timing.evals;
+    timing.cpu_sum += cpu_ms;
+    timing.cpu_max = std::max(timing.cpu_max, cpu_ms);
+    const auto now = std::chrono::steady_clock::now();
+    if (now - timing.window >= std::chrono::seconds(5)) {
+        std::printf("FG timing: %u evaluations, NGX evaluate call on the CPU avg %.2f max %.2f ms, "
+                    "on the GPU avg %.2f max %.2f ms (%u samples), feature creation %.2f ms\n",
+                    timing.evals, timing.evals ? timing.cpu_sum / timing.evals : 0.0,
+                    timing.cpu_max,
+                    timing.gpu_samples ? timing.gpu_sum / timing.gpu_samples : 0.0, timing.gpu_max,
+                    timing.gpu_samples, timing.create_ms);
+        timing.window = now;
+        timing.evals = timing.gpu_samples = 0;
+        timing.cpu_sum = timing.cpu_max = timing.gpu_sum = timing.gpu_max = 0;
+    }
+}
+
 bool FrameGeneration::RecordDlss(vk::CommandBuffer cmdbuf, const Targets& targets) {
     Dlss* dlss = Dlss::Get();
     // NGX refused: AMD's frame interpolation from the next frame (PlanFrame), no game restart.
@@ -598,9 +660,13 @@ bool FrameGeneration::RecordDlss(vk::CommandBuffer cmdbuf, const Targets& target
                              .pImageMemoryBarriers = &output_to_general});
 
     if (!dlss_created) {
+        const auto create_start = std::chrono::steady_clock::now();
         if (!dlss->CreateFrameGeneration(cmdbuf, dlss_desc)) {
             return refused("creation");
         }
+        timing.create_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - create_start)
+                .count();
         dlss_created = true;
         std::printf("Frame generation: on (NVIDIA DLSS Frame Generation, %ux%u, render %ux%u)\n",
                     dlss_desc.width, dlss_desc.height, dlss_desc.render_width,
@@ -627,9 +693,14 @@ bool FrameGeneration::RecordDlss(vk::CommandBuffer cmdbuf, const Targets& target
         .camera = &current.camera,
         .reset = reset_frame,
     };
+    TimingBegin(cmdbuf);
+    const auto evaluate_start = std::chrono::steady_clock::now();
     if (!dlss->EvaluateFrameGeneration(cmdbuf, frame)) {
         return refused("evaluation");
     }
+    TimingEnd(cmdbuf, std::chrono::duration<double, std::milli>(
+                          std::chrono::steady_clock::now() - evaluate_start)
+                          .count());
     ++frame_id;
     const vk::MemoryBarrier2 after{
         .srcStageMask = all,
