@@ -188,6 +188,11 @@ void Menu() {
     }
     ImGui::SetNextWindowPos(pos, ImGuiCond_Appearing);
     ImGui::SetNextWindowSize(ImVec2(620.0f * base_scale, 0.0f), ImGuiCond_Appearing);
+    // The auto-fit height outgrows a 1080p screen; capped, the menu scrolls inside and the buttons
+    // at its end (Close, Quit) stay reachable. Never below 300 px, for a menu_pos near the bottom.
+    const float max_height = std::max(viewport->WorkPos.y + viewport->WorkSize.y - pos.y - 40.0f * base_scale,
+                                      300.0f * base_scale);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(FLT_MAX, max_height));
     bool keep_open = true;
     if (!ImGui::Begin(
             BbSettings::MenuText("Bloodborne - Graphics  (Insert / L3+R3)###bbport_settings",
@@ -559,6 +564,24 @@ void Menu() {
     ImGui::Spacing();
     if (ImGui::Button(BbSettings::MenuText("Close", "Закрыть"))) {
         keep_open = false;
+    }
+    // Two clicks, so a stray one does not drop progress since the last autosave. The quit goes
+    // through the window thread's close path, which runs the shutdown hooks before exiting.
+    static bool confirm_quit = false;
+    ImGui::SameLine();
+    if (ImGui::Button(confirm_quit
+                          ? BbSettings::MenuText("Click again to quit", "Нажмите ещё раз для выхода")
+                          : BbSettings::MenuText("Quit to desktop", "Выйти на рабочий стол"))) {
+        if (confirm_quit) {
+            BbSettings::Save();
+            SDL_Event quit{};
+            quit.type = SDL_EVENT_QUIT;
+            SDL_PushEvent(&quit);
+        }
+        confirm_quit = !confirm_quit;
+    }
+    if (!keep_open) {
+        confirm_quit = false;
     }
     ImGui::SameLine();
     ImGui::TextDisabled("%s", BbSettings::MenuText("Settings are saved to bbport.ini",
