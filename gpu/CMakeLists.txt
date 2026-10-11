@@ -256,6 +256,20 @@ if (WIN32)
     target_compile_options(mouse-camera-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
     target_include_directories(mouse-camera-test PRIVATE .. ../src)
     target_link_libraries(mouse-camera-test PRIVATE PkgConfig::SDL3 bcrypt -pthread)
+    # HelixSR bridge: a Direct3D 12 FFX-API upscaler DLL run on the Vulkan device's GPU. The check
+    # does the Vulkan -> D3D12 -> FFX -> Vulkan round trip alone (no bbgpu, no game):
+    #   ninja -C out/gpu helixsr-bridge-test && out/gpu/helixsr-bridge-test.exe <FFX DX12 DLL, absolute path>
+    set(HELIXSR_FFX_INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fsr-vulkan/upstream/ffx-2.3.0/Kits/FidelityFX/api/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fsr-vulkan/upstream/ffx-2.3.0/Kits/FidelityFX/upscalers/include)
+    set_source_files_properties(shadps4/video_core/renderer_vulkan/vk_helixsr.cpp PROPERTIES
+        INCLUDE_DIRECTORIES "${HELIXSR_FFX_INCLUDES}")
+    add_executable(helixsr-bridge-test EXCLUDE_FROM_ALL ../tests/test_helixsr_bridge.cpp
+        shadps4/video_core/renderer_vulkan/vk_helixsr.cpp)
+    target_compile_options(helixsr-bridge-test PRIVATE -UNDEBUG -Wall -Wextra -Werror
+        -Wno-missing-field-initializers)
+    target_include_directories(helixsr-bridge-test PRIVATE shadps4 ${HELIXSR_FFX_INCLUDES})
+    target_link_libraries(helixsr-bridge-test PRIVATE Vulkan::Headers)
 endif()
 
 add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)
