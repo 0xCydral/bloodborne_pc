@@ -228,8 +228,15 @@ class EnvironmentTests(unittest.TestCase):
 
     def test_an_inherited_directory_does_not_outlive_the_folder(self):
         settings = {**launcher.APP_DEFAULTS, 'game_dir': 'G', 'experimental': True}
-        with mock.patch.dict(launcher.os.environ, {'BB_HELIXSR_DIR': str(self.root / 'planted')}),                 mock.patch.object(launcher, 'load_ini', return_value=({}, [])):
+        with mock.patch.dict(launcher.os.environ, {'BB_HELIXSR_DIR': str(self.root / 'planted')}), \
+                mock.patch.object(launcher, 'load_ini', return_value=({}, [])):
             self.assertNotIn('BB_HELIXSR_DIR', launcher.game_environment(settings))
+
+    def test_a_wrong_chosen_folder_reaches_the_game(self):
+        wrong = str(self.root / 'not-helixsr')
+        settings = {**launcher.APP_DEFAULTS, 'game_dir': 'G', 'experimental': True, 'helixsr_dir': wrong}
+        with mock.patch.object(launcher, 'load_ini', return_value=({}, [])):
+            self.assertEqual(launcher.game_environment(settings)['BB_HELIXSR_DIR'], wrong)
 
     def test_an_inherited_zero_does_not_outlive_the_switch(self):
         settings = {**launcher.APP_DEFAULTS, 'game_dir': 'G', 'experimental': True}

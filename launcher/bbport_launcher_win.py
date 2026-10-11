@@ -968,8 +968,11 @@ def game_environment(s, frame_generation=None):
         env.pop('BB_FSR4VK', None)  # the switch decides: an inherited 0 would leave the dropdown on and the game off
     # HelixSR is experimental too: the game loads the DLL of the folder found for it, only while the switch is on.
     folder = helixsr_folder(str(s.get('helixsr_dir', '')))
-    if folder:
-        env['BB_HELIXSR_DIR'] = str(folder)
+    chosen = str(s.get('helixsr_dir', '')).strip()
+    if folder or chosen:
+        # A wrong chosen folder goes to the game as is: it then reports HelixSR missing, as the dropdown does,
+        # instead of falling back to the helixsr folder next to the executable.
+        env['BB_HELIXSR_DIR'] = str(folder or chosen)
     else:
         env.pop('BB_HELIXSR_DIR', None)  # an inherited one would make the game load a DLL the dropdown calls missing
     if not s.get('experimental'):
