@@ -533,7 +533,7 @@ static int upscalers_mode(void) {
     const int mixed_ok = has_extension(device, "VK_VALVE_shader_mixed_float_dot_product") &&
                          mixed.shaderMixedFloatDotProductFloat16AccFloat32;
 
-    UpscalerVerdict fsr3, fsr4, fsr411, dlss, xess;
+    UpscalerVerdict fsr3, fsr4, fsr411, dlss, xess, helixsr;
     pass(&fsr3);
     if (!features.features.shaderStorageImageWriteWithoutFormat)
         fail(&fsr3, "the GPU lacks shaderStorageImageWriteWithoutFormat");
@@ -574,15 +574,22 @@ static int upscalers_mode(void) {
         fail(&xess, "needs the Vulkan feature mutableDescriptorType");
     if (xess.ok && !features.features.shaderStorageImageWriteWithoutFormat)
         fail(&xess, "needs the Vulkan feature shaderStorageImageWriteWithoutFormat");
+    /* HelixSR runs in a Direct3D 12 device on this GPU; vk_helixsr.cpp shares images and a fence with it
+     * through these two device extensions. Whether HelixSR's own DLL is installed is the launcher's call. */
+    pass(&helixsr);
+    if (!has_extension(device, "VK_KHR_external_memory_win32") ||
+        !has_extension(device, "VK_KHR_external_semaphore_win32"))
+        fail(&helixsr, "the Vulkan driver cannot share images with Direct3D 12");
 #else
     (void)instance_ok;
     (void)mutable_type;
     fail(&dlss, "DLSS is built for Windows only");
     fail(&xess, "XeSS is built for Windows only");
+    fail(&helixsr, "Windows only");
 #endif
     const struct { const char *name; const UpscalerVerdict *verdict; } rows[] = {
         {"fsr4", &fsr4}, {"fsr411", &fsr411}, {"fsr3", &fsr3}, {"taa", &fsr3},
-        {"dlss", &dlss}, {"xess", &xess},
+        {"dlss", &dlss}, {"xess", &xess}, {"helixsr", &helixsr},
     };
     for (size_t i = 0; i < sizeof rows / sizeof rows[0]; ++i) {
         const UpscalerVerdict *v = rows[i].verdict;

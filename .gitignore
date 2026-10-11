@@ -6,6 +6,8 @@ bbport.ini
 fsr4_shaders/
 # The launcher's FSR 4.1.1 download (fsr4vk, GPLv3) in a source tree
 /fsr4vk/
+# HelixSR (closed, freeware) when a player keeps it in the port folder: never committed
+/helixsr/
 pgo/
 *.png
 last_run.log

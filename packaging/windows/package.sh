@@ -188,7 +188,7 @@ else
     # The launcher updater's USER_FILES, plus the FSR 4 assets the launcher downloads.
     find "$play" -mindepth 1 -maxdepth 1 ! -name user ! -name out ! -name mods ! -name bbport.ini \
         ! -name mods.json ! -name patches.json ! -name last_run.log ! -name fsr4vk \
-        ! -name fsr4_shaders -exec rm -rf {} +
+        ! -name helixsr ! -name fsr4_shaders -exec rm -rf {} +
     cp -r "$dest/." "$play/"
     if [[ -d out/reshade-keep ]]; then
         cp out/reshade-keep/ReShade.ini "$play/bin/reshade/"

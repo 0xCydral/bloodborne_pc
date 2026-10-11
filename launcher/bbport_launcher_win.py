@@ -121,8 +121,8 @@ def fetch_update_release(beta=False):
     return None
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'bbport-update'
 # Never copied over an installation by an update (the package does not hold them either). fsr4vk is the
-# experimental FSR 4.1.1 download (fsr4vk_dir()).
-USER_FILES = ('user', 'out', 'mods', 'bbport.ini', 'mods.json', 'patches.json', 'last_run.log', 'fsr4vk')
+# experimental FSR 4.1.1 download (fsr4vk_dir()); helixsr is where a player may keep HelixSR (helixsr_folder()).
+USER_FILES = ('user', 'out', 'mods', 'bbport.ini', 'mods.json', 'patches.json', 'last_run.log', 'fsr4vk', 'helixsr')
 # ReShade (packaging/windows/package.sh): turned on per game run through the Vulkan loader's layer
 # variables, see game_environment().
 RESHADE_DIR = PORT_DIR / 'bin' / 'reshade'
@@ -276,6 +276,7 @@ APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'
                 'addcont': '', 'pkg_dir': '', 'pkg_src': '', 'reshade': False,
                 'beta_versions': is_prerelease(VERSION),  # a beta user keeps getting betas unless they say no
                 'experimental': False, 'object_motion_amd': False, 'monitor': '',  # monitor: a name from --displays; '' is the primary
+                'helixsr_dir': '',  # where the player installed HelixSR; '' looks in <port>\helixsr and C:\HelixSR
                 'gamepad': '', 'gamepad_name': ''}  # gamepad: a GUID from --gamepads (BB_GAMEPAD); '' takes the first one
 
 SIDE_BUTTONS = [(0x05, 'Mouse X1'), (0x06, 'Mouse X2')]  # virtual keys of the mouse's side buttons
@@ -284,6 +285,7 @@ UPSCALERS = [('dlss', ('DLSS (NVIDIA GeForce RTX)',)),
              ('xess', ('XeSS (Intel, any recent GPU)', 'XeSS (Intel, любая современная видеокарта)')),
              ('fsr4', ('FSR 4 (best quality)', 'FSR 4 (лучшее качество)')),
              ('fsr411', ('FSR 4.1.1 (experimental)', 'FSR 4.1.1 (экспериментально)')),
+             ('helixsr', ('HelixSR (experimental)', 'HelixSR (экспериментально)')),
              ('fsr3', ('FSR 3.1 (every GPU)', 'FSR 3.1 (любая видеокарта)')),
              ('taa', ('TAA (native resolution anti-aliasing)', 'TAA (нативное сглаживание)')),
              ('off', ('Off', 'Выключен'))]
@@ -454,6 +456,34 @@ FSR4VK_EXPERIMENTAL_REASON = 'turn on Experimental features in Advanced'
 
 def fsr4vk_dir():
     return PORT_DIR / 'fsr4vk'
+
+
+# HelixSR (experimental): the player installs it (github.com/lonewolf0622/HelixSR) and builds its network with
+# its own setup; the game loads its amd_fidelityfx_dx12.dll from the folder BB_HELIXSR_DIR names. Nothing of
+# it is bundled or downloaded here.
+HELIXSR_DLL = 'amd_fidelityfx_dx12.dll'
+HELIXSR_BUILT = 'helixsr_setup.json'  # written beside the DLL by helixsr-setup.bat
+HELIXSR_URL = 'https://github.com/lonewolf0622/HelixSR/releases'
+HELIXSR_FALLBACK_DIR = Path(r'C:\HelixSR')
+HELIXSR_MISSING_REASON = ('HelixSR is not installed: get it from github.com/lonewolf0622/HelixSR, run its setup once, '
+                          'then pick its folder in Advanced')
+HELIXSR_UNBUILT_REASON = "HelixSR's network is not built: run helixsr-setup.bat in its folder once"
+HELIXSR_GPU_REASON = 'the Vulkan driver cannot share images with Direct3D 12'  # what bb-gpu-capabilities --upscalers says
+
+
+def helixsr_folder(setting=''):
+    """The folder that holds HelixSR's DLL, or None: the chosen one, then <port>\\helixsr, then C:\\HelixSR. Each
+    may be that folder itself or the parent of one HelixSR-* folder (the release zip extracts to HelixSR-1.8.1)."""
+    roots = ([Path(setting.strip())] if setting and setting.strip() else []) + [PORT_DIR / 'helixsr', HELIXSR_FALLBACK_DIR]
+    for root in roots:
+        try:
+            nested = sorted((p for p in root.glob('HelixSR-*') if p.is_dir()), reverse=True)
+            for folder in [root, *nested]:
+                if (folder / HELIXSR_DLL).is_file():
+                    return folder
+        except OSError:
+            continue
+    return None
 
 
 def fsr4vk_shown(*more):
@@ -637,11 +667,29 @@ def fsr411_state(support, experimental, files_present):
     return 'ok', ''
 
 
-def upscaler_state(name, support, assets_missing, experimental=False, fsr4vk_files=False):
+def helixsr_state(support, experimental, folder):
+    """('ok' | 'no', reason) of the experimental HelixSR, ruled like FSR 4.1.1: a GPU that cannot run it keeps its
+    own reason, then it needs Experimental features, then HelixSR itself (folder from helixsr_folder()) with
+    its network built."""
+    verdict = (support or {}).get('helixsr')
+    if verdict and not verdict[0]:
+        return 'no', verdict[1]
+    if not experimental:
+        return 'no', FSR4VK_EXPERIMENTAL_REASON
+    if folder is None:
+        return 'no', HELIXSR_MISSING_REASON
+    if not (Path(folder) / HELIXSR_BUILT).is_file():
+        return 'no', HELIXSR_UNBUILT_REASON
+    return 'ok', ''
+
+
+def upscaler_state(name, support, assets_missing, experimental=False, fsr4vk_files=False, helixsr=None):
     """('ok' | 'slow' | 'no', reason) of one upscaler. support is None until the GPU check has run (and
-    when it could not): then only the missing FSR 4 assets are known."""
+    when it could not): then only the missing FSR 4 assets are known. helixsr is helixsr_folder()'s answer."""
     if name == 'fsr411':
         return fsr411_state(support, experimental, fsr4vk_files)
+    if name == 'helixsr':
+        return helixsr_state(support, experimental, helixsr)
     verdict = (support or {}).get(name)
     if verdict and not verdict[0]:
         return 'no', verdict[1]
@@ -655,6 +703,10 @@ def upscaler_state(name, support, assets_missing, experimental=False, fsr4vk_fil
 UPSCALER_REASONS_RU = {
     FSR4VK_FILES_REASON: 'файлы FSR 4.1.1 не скачаны',
     FSR4VK_EXPERIMENTAL_REASON: 'включите «Экспериментальные функции» в «Дополнительно»',
+    HELIXSR_MISSING_REASON: 'HelixSR не установлен: скачайте его на github.com/lonewolf0622/HelixSR, один раз '
+                            'запустите его установку и выберите его папку в «Дополнительно»',
+    HELIXSR_UNBUILT_REASON: 'сеть HelixSR не собрана: один раз запустите helixsr-setup.bat в его папке',
+    HELIXSR_GPU_REASON: 'драйвер Vulkan не умеет делиться изображениями с Direct3D 12',
     'download the FSR 4 assets in Graphics': 'скачайте ассеты FSR 4 на вкладке «Графика»',
     'may be slow on this GPU': 'на этой видеокарте может быть медленно',
     'the GPU or driver lacks the INT8 features FSR 4 needs': 'видеокарте или драйверу не хватает INT8, нужного FSR 4',
@@ -693,11 +745,13 @@ def best_upscaler(support):
     return 'dlss' if (support or {}).get('dlss', (False, ''))[0] else 'fsr3'
 
 
-def upscaler_fallback(current, support, experimental, fsr4vk_files):
+def upscaler_fallback(current, support, experimental, fsr4vk_files, helixsr=None):
     """(better, reason) when the saved upscaler cannot run on this PC, else None. Only what the GPU
-    check or the FSR 4.1.1 rules rule out counts: a missing FSR 4 download is left to the game."""
+    check or the FSR 4.1.1 and HelixSR rules rule out counts: a missing FSR 4 download is left to the game."""
     if current == 'fsr411':
         state, reason = fsr411_state(support, experimental, fsr4vk_files)
+    elif current == 'helixsr':
+        state, reason = helixsr_state(support, experimental, helixsr)
     else:
         verdict = (support or {}).get(current)
         state, reason = ('no', verdict[1]) if verdict and not verdict[0] else ('ok', '')
@@ -906,6 +960,14 @@ def game_environment(s, frame_generation=None):
         env['BB_FSR4VK'] = '0'
     else:
         env.pop('BB_FSR4VK', None)  # the switch decides: an inherited 0 would leave the dropdown on and the game off
+    # HelixSR is experimental too: the game loads the DLL of the folder found for it, only while the switch is on.
+    folder = helixsr_folder(str(s.get('helixsr_dir', '')))
+    if folder:
+        env['BB_HELIXSR_DIR'] = str(folder)
+    if not s.get('experimental'):
+        env['BB_HELIXSR'] = '0'
+    else:
+        env.pop('BB_HELIXSR', None)
     for item in str(s['extra_env']).split():
         if '=' in item:
             key, value = item.split('=', 1)
@@ -2212,9 +2274,10 @@ class Launcher:
 
     def upscaler_states(self):
         """{upscaler: (state, reason)} for the dropdown, from the GPU check, the FSR 4 assets and, for
-        the experimental FSR 4.1.1, the Experimental features switch and its downloaded files."""
+        the experimental FSR 4.1.1 and HelixSR, the Experimental features switch and their files."""
         missing, experimental, files = bool(fsr4_missing()), bool(self.var('experimental', 'app').get()), fsr4vk_present()
-        return {value: upscaler_state(value, self.upscaler_support, missing, experimental, files)
+        helixsr = helixsr_folder(self.var('helixsr_dir', 'app').get())
+        return {value: upscaler_state(value, self.upscaler_support, missing, experimental, files, helixsr)
                 for value, _t in UPSCALERS}
 
     def upscaler_choice(self, parent, width=None):
@@ -2273,10 +2336,10 @@ class Launcher:
     def apply_upscaler_support(self):
         """After the GPU check, the FSR 4 download, or a change of Experimental features: re-mark the
         dropdowns; a saved upscaler this PC cannot run (the GPU, or FSR 4.1.1 without Experimental features
-        or its files) becomes the best one that works (DLSS on an RTX GPU, else FSR 3.1), said once."""
+        or its files, HelixSR likewise) becomes the best one that works (DLSS on an RTX GPU, else FSR 3.1), said once."""
         current = self.var('upscaler', 'ini').get()
         fallback = upscaler_fallback(current, self.upscaler_support, bool(self.var('experimental', 'app').get()),
-                                     fsr4vk_present())
+                                     fsr4vk_present(), helixsr_folder(self.var('helixsr_dir', 'app').get()))
         if fallback:
             better, reason = fallback
             name = lambda value: _(*dict(UPSCALERS)[value]).split(' (')[0]
@@ -3322,10 +3385,12 @@ class Launcher:
             side='left', padx=px(12))
         f = self.card(page, _('Performance', 'Производительность'))
         self.check(f, 'experimental', 'app', _('Experimental features', 'Экспериментальные функции'),
-                   _('Unlocks options that are still being tested and marked (experimental). For now: FSR 4.1.1, and '
-                     'object motion vectors on AMD graphics cards, which can lower the frame rate or draw some objects wrong.',
-                     'Открывает функции, которые ещё проверяются и помечены (экспериментально). Пока это FSR 4.1.1 и '
-                     'векторы движения объектов на видеокартах AMD: они могут снижать FPS или неправильно рисовать объекты.'))
+                   _('Unlocks options that are still being tested and marked (experimental). For now: FSR 4.1.1, HelixSR, '
+                     'and object motion vectors on AMD graphics cards, which can lower the frame rate or draw some objects wrong.',
+                     'Открывает функции, которые ещё проверяются и помечены (экспериментально). Пока это FSR 4.1.1, '
+                     'HelixSR и векторы движения объектов на видеокартах AMD: они могут снижать FPS или неправильно '
+                     'рисовать объекты.'))
+        self.helixsr_row(f)
         self.row(f, _('Two-stage GPU pipeline', 'Двухстадийный конвейер GPU'), self.choice(f, 'draw_pipe', 'app', DRAW_PIPE),
                  _('20–30% faster; switch it off if the game is unstable.', 'Быстрее на 20–30%; при нестабильности выключите.'))
         self.row(f, _('GPU readbacks', 'Чтение данных GPU'), self.choice(f, 'readbacks', 'app', READBACKS),
@@ -3339,6 +3404,37 @@ class Launcher:
         self.row(f, _('Extra variables', 'Доп. переменные'), self.ttk.Entry(f, textvariable=self.var('extra_env', 'app'), width=58),
                  _('NAME=value pairs separated by spaces (README lists them).', 'Пары ИМЯ=значение через пробел (список в README).'),
                  fill=True)
+
+    def helixsr_row(self, parent):
+        """The HelixSR folder under the Experimental switch: where the launcher found it, Browse to point it at
+        another, and the download page. A change re-marks the upscaler dropdowns."""
+        var = self.var('helixsr_dir', 'app')
+        holder = self.tk.Frame(parent, bg=CARD)
+        found = self.label(holder, '', wraplength=self.px(360), justify='left')
+        found.pack(side='left')
+
+        def show():
+            folder = helixsr_folder(var.get())
+            found.configure(text=str(folder) if folder else _('not found', 'не найдена'), fg=TEXT if folder else MUTED)
+
+        def changed(*_args):
+            show()
+            self.apply_upscaler_support()
+
+        def browse():
+            chosen = self.filedialog.askdirectory(title=_('Choose the HelixSR folder', 'Выберите папку HelixSR'),
+                                                  initialdir=var.get() or str(Path.home()))
+            if chosen:
+                var.set(str(Path(chosen)))
+        self.button(holder, _('Browse…', 'Обзор…'), browse).pack(side='left', padx=(self.px(12), 0))
+        self.button(holder, _('Get HelixSR', 'Скачать HelixSR'), lambda: webbrowser.open(HELIXSR_URL)).pack(
+            side='left', padx=(self.px(8), 0))
+        var.trace_add('write', changed)
+        show()
+        self.row(parent, _('HelixSR folder', 'Папка HelixSR'), holder,
+                 _('Where its amd_fidelityfx_dx12.dll is; HelixSR is a separate download, set up once with its own '
+                   'helixsr-setup.bat.', 'Где лежит его amd_fidelityfx_dx12.dll. HelixSR скачивается отдельно и один '
+                   'раз настраивается своим helixsr-setup.bat.'))
 
     def animations_changed(self):
         """The Animations switch: motion stops at once, or starts again."""
