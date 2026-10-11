@@ -1047,8 +1047,19 @@ std::filesystem::path Directory() {
     if (const wchar_t* dir = _wgetenv(L"BB_HELIXSR_DIR"); dir && dir[0]) {
         return dir;
     }
+    // Grow the buffer until the path fits (GetModuleFileNameW truncates and returns the buffer size).
     std::wstring path(MAX_PATH, L'\0');
-    path.resize(GetModuleFileNameW(nullptr, path.data(), DWORD(path.size())));
+    for (;;) {
+        const DWORD length = GetModuleFileNameW(nullptr, path.data(), DWORD(path.size()));
+        if (length == 0) {
+            return {}; // Problem() then reports the DLL as not installed
+        }
+        if (length < path.size()) {
+            path.resize(length);
+            break;
+        }
+        path.resize(path.size() * 2);
+    }
     return std::filesystem::path{path}.parent_path() / "helixsr";
 }
 
@@ -1063,6 +1074,9 @@ std::string Problem() {
         return "turned off: Experimental features is off in the launcher";
     }
     const auto dir = Directory();
+    if (dir.empty()) {
+        return "cannot read the game's own path to find the helixsr folder";
+    }
     std::error_code error;
     if (!std::filesystem::is_regular_file(dir / L"amd_fidelityfx_dx12.dll", error)) {
         const auto u8 = dir.u8string();

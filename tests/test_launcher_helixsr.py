@@ -32,12 +32,11 @@ class FolderTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.port, self.fallback = self.root / 'port', self.root / 'C_HelixSR'
+        self.port = self.root / 'port'
         self.port.mkdir()
-        for name, value in (('PORT_DIR', self.port), ('HELIXSR_FALLBACK_DIR', self.fallback)):
-            patcher = mock.patch.object(launcher, name, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(launcher, 'PORT_DIR', self.port)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_the_chosen_folder_itself(self):
         folder = install(self.root / 'mine')
@@ -58,6 +57,22 @@ class FolderTests(unittest.TestCase):
         newer = install(self.root / 'mine' / 'HelixSR-1.9.0')
         self.assertEqual(launcher.helixsr_folder(str(self.root / 'mine')), newer)
 
+    def test_versions_compare_as_numbers_not_as_text(self):
+        install(self.root / 'mine' / 'HelixSR-1.9.0')
+        newest = install(self.root / 'mine' / 'HelixSR-1.10.0')
+        install(self.root / 'mine' / 'HelixSR-1.8.1')
+        self.assertEqual(launcher.helixsr_folder(str(self.root / 'mine')), newest)
+
+    def test_a_name_without_a_version_sorts_below_every_version(self):
+        install(self.root / 'mine' / 'HelixSR-backup')
+        install(self.root / 'mine' / 'HelixSR-old-copy')
+        only = launcher.helixsr_folder(str(self.root / 'mine'))
+        self.assertEqual(only.name, 'HelixSR-old-copy')  # no version anywhere: the name decides, but it is found
+        versioned = install(self.root / 'mine' / 'HelixSR-0.1')
+        self.assertEqual(launcher.helixsr_folder(str(self.root / 'mine')), versioned)
+        keys = [launcher.helixsr_release_order(Path(name)) for name in ('HelixSR-x', 'HelixSR-1.9.0', 'HelixSR-1.10.0')]
+        self.assertEqual(sorted(keys), [keys[0], keys[1], keys[2]])
+
     def test_a_file_named_like_a_release_is_not_a_folder(self):
         (self.root / 'mine').mkdir()
         (self.root / 'mine' / 'HelixSR-1.8.1').write_text('x', encoding='utf-8')
@@ -67,9 +82,12 @@ class FolderTests(unittest.TestCase):
         self.assertIsNone(launcher.helixsr_folder(''))
         self.assertIsNone(launcher.helixsr_folder(str(self.root / 'does-not-exist')))
 
-    def test_the_port_folder_then_c_helixsr(self):
-        fallback = install(self.fallback)
-        self.assertEqual(launcher.helixsr_folder(''), fallback)
+    def test_nothing_is_looked_for_outside_the_port_and_the_setting(self):
+        # a fixed place such as C:\HelixSR is a DLL-planting spot: any user can create a folder at a drive's root
+        self.assertFalse(hasattr(launcher, 'HELIXSR_FALLBACK_DIR'))
+        self.assertIsNone(launcher.helixsr_folder(''))
+
+    def test_the_port_folder_is_looked_in_when_no_folder_is_chosen(self):
         beside = install(self.port / 'helixsr')
         self.assertEqual(launcher.helixsr_folder(''), beside)
         self.assertEqual(launcher.helixsr_folder('   '), beside)
@@ -78,10 +96,12 @@ class FolderTests(unittest.TestCase):
         inner = install(self.port / 'helixsr' / 'HelixSR-1.8.1')
         self.assertEqual(launcher.helixsr_folder(''), inner)
 
-    def test_the_setting_wins_and_a_wrong_one_falls_through(self):
+    def test_a_chosen_folder_is_the_only_one_used(self):
         mine, beside = install(self.root / 'mine'), install(self.port / 'helixsr')
         self.assertEqual(launcher.helixsr_folder(str(mine)), mine)
-        self.assertEqual(launcher.helixsr_folder(str(self.root / 'empty')), beside)
+        # a wrong choice is reported as not installed, never silently replaced by the port's copy
+        self.assertIsNone(launcher.helixsr_folder(str(self.root / 'empty')))
+        self.assertEqual(launcher.helixsr_folder(''), beside)
 
     def test_the_folder_is_inside_the_ignored_and_kept_names(self):
         self.assertIn('helixsr', launcher.USER_FILES)
@@ -107,7 +127,7 @@ class StateTests(unittest.TestCase):
         for support in (SUPPORTED, None):
             for folder in (None, self.unbuilt, self.built):
                 self.assertEqual(launcher.helixsr_state(support, False, folder),
-                                 ('no', launcher.FSR4VK_EXPERIMENTAL_REASON))
+                                 ('no', launcher.EXPERIMENTAL_REASON))
 
     def test_on_without_a_folder_says_where_to_get_it(self):
         state, reason = launcher.helixsr_state(SUPPORTED, True, None)
@@ -134,7 +154,7 @@ class StateTests(unittest.TestCase):
 
     def test_every_reason_has_a_russian_text(self):
         for reason in (launcher.HELIXSR_MISSING_REASON, launcher.HELIXSR_UNBUILT_REASON,
-                       launcher.HELIXSR_GPU_REASON, launcher.FSR4VK_EXPERIMENTAL_REASON):
+                       launcher.HELIXSR_GPU_REASON, launcher.EXPERIMENTAL_REASON):
             self.assertIn(reason, launcher.UPSCALER_REASONS_RU)
 
     def test_the_dropdown_lists_it_after_fsr411_marked_experimental(self):
@@ -152,7 +172,7 @@ class FallbackTests(unittest.TestCase):
 
     def test_a_saved_helixsr_without_experimental_features_falls_back(self):
         self.assertEqual(launcher.upscaler_fallback('helixsr', SUPPORTED, False, True, self.built),
-                         ('fsr3', launcher.FSR4VK_EXPERIMENTAL_REASON))
+                         ('fsr3', launcher.EXPERIMENTAL_REASON))
 
     def test_a_saved_helixsr_whose_folder_is_gone_falls_back(self):
         self.assertEqual(launcher.upscaler_fallback('helixsr', SUPPORTED, True, True, None),
@@ -173,10 +193,9 @@ class EnvironmentTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        for name, value in (('PORT_DIR', self.root / 'port'), ('HELIXSR_FALLBACK_DIR', self.root / 'none')):
-            patcher = mock.patch.object(launcher, name, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(launcher, 'PORT_DIR', self.root / 'port')
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def environment(self, experimental, helixsr_dir='', **extra):
         settings = {**launcher.APP_DEFAULTS, 'game_dir': 'G', 'experimental': experimental,
@@ -207,6 +226,11 @@ class EnvironmentTests(unittest.TestCase):
         self.assertNotIn('BB_HELIXSR_DIR', env)
         self.assertNotIn('BB_HELIXSR', env)
 
+    def test_an_inherited_directory_does_not_outlive_the_folder(self):
+        settings = {**launcher.APP_DEFAULTS, 'game_dir': 'G', 'experimental': True}
+        with mock.patch.dict(launcher.os.environ, {'BB_HELIXSR_DIR': str(self.root / 'planted')}),                 mock.patch.object(launcher, 'load_ini', return_value=({}, [])):
+            self.assertNotIn('BB_HELIXSR_DIR', launcher.game_environment(settings))
+
     def test_an_inherited_zero_does_not_outlive_the_switch(self):
         settings = {**launcher.APP_DEFAULTS, 'game_dir': 'G', 'experimental': True}
         with mock.patch.dict(launcher.os.environ, {'BB_HELIXSR': '0'}), \
@@ -234,6 +258,14 @@ class CapabilityRowTests(unittest.TestCase):
         source = (Path(__file__).resolve().parents[1] / 'tools' / 'gpu_capabilities.c').read_text(encoding='utf-8')
         self.assertIn(f'fail(&helixsr, "{launcher.HELIXSR_GPU_REASON}");', source)
         self.assertIn('{"helixsr", &helixsr}', source)
+
+    def test_the_renderer_says_the_same_things_as_the_launcher(self):
+        # the game's menu and the launcher's dropdown must give the same reason for the same cause
+        renderer = Path(__file__).resolve().parents[1] / 'gpu' / 'shadps4' / 'video_core' / 'renderer_vulkan'
+        upscaler = (renderer / 'vk_temporal_upscaler.cpp').read_text(encoding='utf-8')
+        helixsr = (renderer / 'vk_helixsr.cpp').read_text(encoding='utf-8')
+        self.assertIn(f'"{launcher.HELIXSR_GPU_REASON}"', upscaler)
+        self.assertIn(f'"{launcher.HELIXSR_UNBUILT_REASON}"', helixsr)
 
 
 if __name__ == '__main__':

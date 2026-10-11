@@ -276,7 +276,7 @@ APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'
                 'addcont': '', 'pkg_dir': '', 'pkg_src': '', 'reshade': False,
                 'beta_versions': is_prerelease(VERSION),  # a beta user keeps getting betas unless they say no
                 'experimental': False, 'object_motion_amd': False, 'monitor': '',  # monitor: a name from --displays; '' is the primary
-                'helixsr_dir': '',  # where the player installed HelixSR; '' looks in <port>\helixsr and C:\HelixSR
+                'helixsr_dir': '',  # where the player installed HelixSR; '' looks in <port>\helixsr only
                 'gamepad': '', 'gamepad_name': ''}  # gamepad: a GUID from --gamepads (BB_GAMEPAD); '' takes the first one
 
 SIDE_BUTTONS = [(0x05, 'Mouse X1'), (0x06, 'Mouse X2')]  # virtual keys of the mouse's side buttons
@@ -451,7 +451,7 @@ def fsr4_missing():
 # downloads it). It is not in the package; it lives in a folder of the install that updates keep.
 FSR4VK_FILES_REASON = 'FSR 4.1.1 files are not downloaded'  # also what bb-gpu-capabilities --upscalers says
 FSR4VK_OFF_REASON = 'switched off (BB_FSR4VK=0)'  # likewise: the tool obeys BB_FSR4VK, which says nothing of the PC
-FSR4VK_EXPERIMENTAL_REASON = 'turn on Experimental features in Advanced'
+EXPERIMENTAL_REASON = 'turn on Experimental features in Advanced'
 
 
 def fsr4vk_dir():
@@ -464,26 +464,32 @@ def fsr4vk_dir():
 HELIXSR_DLL = 'amd_fidelityfx_dx12.dll'
 HELIXSR_BUILT = 'helixsr_setup.json'  # written beside the DLL by helixsr-setup.bat
 HELIXSR_URL = 'https://github.com/lonewolf0622/HelixSR/releases'
-HELIXSR_FALLBACK_DIR = Path(r'C:\HelixSR')
 HELIXSR_MISSING_REASON = ('HelixSR is not installed: get it from github.com/lonewolf0622/HelixSR, run its setup once, '
                           'then pick its folder in Advanced')
 HELIXSR_UNBUILT_REASON = "HelixSR's network is not built: run helixsr-setup.bat in its folder once"
 HELIXSR_GPU_REASON = 'the Vulkan driver cannot share images with Direct3D 12'  # what bb-gpu-capabilities --upscalers says
 
 
+def helixsr_release_order(folder):
+    """Sort key of a HelixSR-<version> folder: the version as a tuple of ints, so 1.10.0 is above 1.9.0; a name
+    that holds no version sorts below every version."""
+    version = folder.name[len('HelixSR-'):]
+    if re.fullmatch(r'\d+(?:\.\d+)*', version):
+        return 1, tuple(int(part) for part in version.split('.')), folder.name
+    return 0, (), folder.name
+
+
 def helixsr_folder(setting=''):
-    """The folder that holds HelixSR's DLL, or None: the chosen one, then <port>\\helixsr, then C:\\HelixSR. Each
-    may be that folder itself or the parent of one HelixSR-* folder (the release zip extracts to HelixSR-1.8.1)."""
-    roots = ([Path(setting.strip())] if setting and setting.strip() else []) + [PORT_DIR / 'helixsr', HELIXSR_FALLBACK_DIR]
-    for root in roots:
-        try:
-            nested = sorted((p for p in root.glob('HelixSR-*') if p.is_dir()), reverse=True)
-            for folder in [root, *nested]:
-                if (folder / HELIXSR_DLL).is_file():
-                    return folder
-        except OSError:
-            continue
-    return None
+    """The folder that holds HelixSR's DLL, or None. A chosen folder is the only place looked in (a wrong one is
+    'not installed', never replaced by another copy); with none chosen it is <port>\\helixsr. Either may be that
+    folder itself or the parent of HelixSR-* folders (the release zip extracts to HelixSR-1.8.1): the newest
+    version wins. No fixed place outside the port: any user can create a folder at a drive's root."""
+    root = Path(setting.strip()) if setting and setting.strip() else PORT_DIR / 'helixsr'
+    try:
+        nested = sorted((p for p in root.glob('HelixSR-*') if p.is_dir()), key=helixsr_release_order, reverse=True)
+        return next((folder for folder in [root, *nested] if (folder / HELIXSR_DLL).is_file()), None)
+    except OSError:
+        return None
 
 
 def fsr4vk_shown(*more):
@@ -661,7 +667,7 @@ def fsr411_state(support, experimental, files_present):
     if verdict and not verdict[0] and verdict[1] not in (FSR4VK_FILES_REASON, FSR4VK_OFF_REASON):
         return 'no', verdict[1]
     if not experimental:
-        return 'no', FSR4VK_EXPERIMENTAL_REASON
+        return 'no', EXPERIMENTAL_REASON
     if not files_present:
         return 'no', FSR4VK_FILES_REASON
     return 'ok', ''
@@ -675,7 +681,7 @@ def helixsr_state(support, experimental, folder):
     if verdict and not verdict[0]:
         return 'no', verdict[1]
     if not experimental:
-        return 'no', FSR4VK_EXPERIMENTAL_REASON
+        return 'no', EXPERIMENTAL_REASON
     if folder is None:
         return 'no', HELIXSR_MISSING_REASON
     if not (Path(folder) / HELIXSR_BUILT).is_file():
@@ -702,7 +708,7 @@ def upscaler_state(name, support, assets_missing, experimental=False, fsr4vk_fil
 
 UPSCALER_REASONS_RU = {
     FSR4VK_FILES_REASON: 'файлы FSR 4.1.1 не скачаны',
-    FSR4VK_EXPERIMENTAL_REASON: 'включите «Экспериментальные функции» в «Дополнительно»',
+    EXPERIMENTAL_REASON: 'включите «Экспериментальные функции» в «Дополнительно»',
     HELIXSR_MISSING_REASON: 'HelixSR не установлен: скачайте его на github.com/lonewolf0622/HelixSR, один раз '
                             'запустите его установку и выберите его папку в «Дополнительно»',
     HELIXSR_UNBUILT_REASON: 'сеть HelixSR не собрана: один раз запустите helixsr-setup.bat в его папке',
@@ -964,6 +970,8 @@ def game_environment(s, frame_generation=None):
     folder = helixsr_folder(str(s.get('helixsr_dir', '')))
     if folder:
         env['BB_HELIXSR_DIR'] = str(folder)
+    else:
+        env.pop('BB_HELIXSR_DIR', None)  # an inherited one would make the game load a DLL the dropdown calls missing
     if not s.get('experimental'):
         env['BB_HELIXSR'] = '0'
     else:

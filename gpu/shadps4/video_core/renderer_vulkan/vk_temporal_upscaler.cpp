@@ -392,10 +392,9 @@ bool TemporalUpscaler::OnFrameStart() {
         scheduler.Finish();
         fsr4 = std::make_unique<Fsr4Upscaler>(instance, scheduler);
         if (BbSettings::IsFsr4(upscaler)) BbSettings::Get().fsr4_problem = nullptr;
-        // The GPU is idle: the bridge frees its shared images, and a new HelixSR choice starts over.
+        // The GPU is idle: the bridge frees its shared images. A failed HelixSR stays unsupported for the session.
         helixsr.reset();
         helixsr_setup.reset();
-        helixsr_failed = false;
     }
     if (applied_upscaler != upscaler) fsr4_failed = false; // retry after a menu change
     // Dynamic scene resolution scaling (live preset switching) works on all GPUs.
@@ -2409,6 +2408,8 @@ bool TemporalUpscaler::RecordHelixSr(const Dlss::Resource& color, const Dlss::Re
     std::string error;
     const auto fail = [&] {
         std::printf("Upscaler: HelixSR failed: %s; using FSR 3.1\n", error.c_str());
+        // Unsupported for the session: the in-game menu greys it out and says why, and it is not retried.
+        BbSettings::ConfigureHelixSrSupport(false, error.empty() ? "unknown error" : error.c_str());
         BbSettings::Get().upscaler = BbSettings::UpscalerFsr3;
         helixsr_failed = true; // EnsureResources creates the FSR 3 context next frame
         reset = true;
@@ -2473,7 +2474,7 @@ bool TemporalUpscaler::RecordHelixSr(const Dlss::Resource& color, const Dlss::Re
         .render_h = h,
         .frame_ms = frame_ms,
         .near_plane = camera_motion.Near(),
-        .far_plane = 3000.0f,
+        .far_plane = 3000.0f, // the far plane every upscaler path here uses (docs/upscaler.md, depth convention)
         .fov_y = camera_motion.VerticalFov(),
         .reset = reset,
     };

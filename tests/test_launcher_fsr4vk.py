@@ -43,8 +43,8 @@ class GateTests(unittest.TestCase):
         for files in (False, True):
             for support in (SUPPORTED, NO_FILES, None):
                 state, reason = self.state(support, False, files)
-                self.assertEqual((state, reason), ('no', launcher.FSR4VK_EXPERIMENTAL_REASON))
-        self.assertIn('Experimental features', launcher.FSR4VK_EXPERIMENTAL_REASON)
+                self.assertEqual((state, reason), ('no', launcher.EXPERIMENTAL_REASON))
+        self.assertIn('Experimental features', launcher.EXPERIMENTAL_REASON)
 
     def test_on_without_the_files_says_they_are_not_downloaded(self):
         self.assertEqual(self.state(NO_FILES, True, False), ('no', launcher.FSR4VK_FILES_REASON))
@@ -66,7 +66,7 @@ class GateTests(unittest.TestCase):
         switched_off = {'fsr411': (False, 'switched off (BB_FSR4VK=0)')}
         self.assertEqual(self.state(switched_off, True, True), ('ok', ''))
         self.assertEqual(self.state(switched_off, True, False), ('no', launcher.FSR4VK_FILES_REASON))
-        self.assertEqual(self.state(switched_off, False, True), ('no', launcher.FSR4VK_EXPERIMENTAL_REASON))
+        self.assertEqual(self.state(switched_off, False, True), ('no', launcher.EXPERIMENTAL_REASON))
 
     def test_the_tool_prints_the_switched_off_reason_the_launcher_ignores(self):
         source = (Path(__file__).resolve().parents[1] / 'tools' / 'gpu_capabilities.c').read_text(encoding='utf-8')
@@ -92,7 +92,7 @@ class GateTests(unittest.TestCase):
 class FallbackTests(unittest.TestCase):
     def test_a_saved_fsr411_without_experimental_features_falls_back(self):
         better, reason = launcher.upscaler_fallback('fsr411', SUPPORTED, False, True)
-        self.assertEqual((better, reason), ('fsr3', launcher.FSR4VK_EXPERIMENTAL_REASON))
+        self.assertEqual((better, reason), ('fsr3', launcher.EXPERIMENTAL_REASON))
 
     def test_a_saved_fsr411_whose_files_are_gone_falls_back(self):
         self.assertEqual(launcher.upscaler_fallback('fsr411', SUPPORTED, True, False),
