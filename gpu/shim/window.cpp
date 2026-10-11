@@ -218,6 +218,7 @@ bool WindowSDL::PollEvents() {
     if (!text_active) {
         BbOverlay::UpdateTextInput(window);
     }
+    BbOverlay::Tick();
     BbOverlay::TestTick();
     UpdateMouseCapture();
     SDL_Event event;

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // bbport: in-game settings menu (Dear ImGui), drawn by the presenter into the swapchain image
-// after the game frame, at display resolution. Insert (keyboard) or L3+R3 (gamepad) opens it;
-// while it is open the game gets no pad/keyboard input. Settings live in bbport_settings.h.
+// after the game frame, at display resolution. Insert (keyboard) or a tap of L3+R3 (gamepad)
+// opens it; holding L3+R3 opens a quit box instead. While either is open the game gets no
+// pad/keyboard input. Settings live in bbport_settings.h.
 
 #pragma once
 
@@ -40,6 +41,9 @@ bool MenuOpen();
 
 /// Window thread: the game's text dialog (ImeDialog) state, drawn as a box over the frame.
 void SetTextPrompt(bool active, const std::string& prompt, const std::string& text);
+
+/// Window thread, once per poll: a held L3+R3 opens the quit box after 1.5 s.
+void Tick();
 
 /// Window thread, test knob: BB_TEST_OVERLAY_AT=<seconds>[,<seconds>...] toggles the menu that many
 /// seconds after the first call, so a harness run can open and close it without sending input.
