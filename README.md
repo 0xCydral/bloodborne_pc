@@ -53,6 +53,7 @@ You set everything up in a small program called the launcher: pick your game, pi
 | A full play-through | **Not verified** | |
 | The Old Hunters DLC | **Experimental** | The license is reported to the game. See the [FAQ](#troubleshooting-and-faq). |
 | FSR 4.1.1 on Windows | **Experimental** | Off until you opt in. Not in the zip. |
+| HelixSR on Windows | **Experimental** | Off until you opt in. Not in the zip: you install HelixSR yourself. |
 | Linux | **Upstream** | The Linux version is in the [upstream project](https://github.com/deadinside28/bloodborne_pc). |
 
 ### Tested hardware
@@ -60,7 +61,7 @@ You set everything up in a small program called the launcher: pick your game, pi
 | Graphics card | What was checked |
 |---|---|
 | NVIDIA GeForce RTX 5080 | FSR 3.1 and FSR 4, game versions 1.00 and 1.09 |
-| NVIDIA GeForce RTX 4070 | FSR 4.1.1 through fsr4vk, and frame generation for five minutes at a 60 FPS base |
+| NVIDIA GeForce RTX 4070 | FSR 4.1.1 through fsr4vk, HelixSR 1.8.1, and frame generation for five minutes at a 60 FPS base |
 | AMD Radeon RX 6700 XT, RX 6600 | The fix for the crash when the world loads (see the [FAQ](#troubleshooting-and-faq)). The RX 6600 also ran FSR 4.1.1 through fsr4vk. |
 
 Cards that are not on this list are untested here. If you play on one, a [bug report](https://github.com/0xCydral/bloodborne_pc/issues/new?template=bug_report.yml) with your `user\last_run.log` helps either way.
@@ -143,7 +144,7 @@ Here is the Advanced view on the Graphics tab:
 
 ![The launcher in Advanced view on the Graphics tab, with the upscaler, preset and output size](docs/screenshots/launcher-advanced.png)
 
-The in-game menu changes some of the same settings while you play: upscaler, preset, sharpness, output resolution and game effects. Open it with **Insert** (or **L3+R3** on a controller; Numpad 0 with Num Lock off also works).
+The in-game menu changes some of the same settings while you play: upscaler, preset, sharpness, output resolution and game effects. Open it with **Insert** (or a tap of **L3+R3** on a controller; Numpad 0 with Num Lock off also works). Hold **L3+R3** for 1.5 seconds to open a small "Quit to desktop?" box instead. **Quit** saves your settings and closes the game. **Cancel** has the focus, and **Circle** closes the box. The menu's **Quit to desktop** button opens the same box. On the keyboard, **Alt+F4** quits.
 
 ### Upscaler
 
@@ -159,6 +160,8 @@ An upscaler draws the game at a lower resolution and then enlarges the picture t
 | Any card | **TAA** draws at your screen's resolution with anti-aliasing and no upscaling. |
 
 You can leave the default. The launcher checks your card when it opens and greys out the upscalers it cannot run, with the reason. If your saved choice cannot run, the launcher switches to DLSS (RTX cards) or FSR 3.1 and tells you once. FSR 4 needs its files in `fsr4_shaders\` (they are in the zip, or **Graphics > Download FSR 4 assets**). Without them, or on a card that lacks the shader features, the game falls back to FSR 3.1 by itself.
+
+On Windows the list also has **HelixSR (experimental)**, which runs NVIDIA's DLSS network through a separate program. It is off until you turn on **Experimental features**, and you install it yourself. See the [FAQ](#troubleshooting-and-faq).
 
 ### Preset and output
 
@@ -279,6 +282,22 @@ If you downloaded it with an earlier version, the same place offers **Update FSR
 </details>
 
 <details>
+<summary><b>How do I use HelixSR (NVIDIA's DLSS model, experimental)?</b></summary>
+
+It is experimental, Windows only, off until you opt in, and not in the zip. [HelixSR](https://github.com/lonewolf0622/HelixSR) is a separate, unofficial program that runs NVIDIA's DLSS upscaling network (Model E) as Direct3D 12 compute shaders. Its author targets AMD cards, RDNA 1 and newer. It is closed source and free to use, and it is not affiliated with NVIDIA or AMD. This port does not include or download HelixSR or any NVIDIA file. The game loads your own, unmodified HelixSR DLL (`amd_fidelityfx_dx12.dll`) and runs it next to its Vulkan renderer, through a Direct3D 12 device on the same graphics card.
+
+1. Download HelixSR from its [releases page](https://github.com/lonewolf0622/HelixSR/releases) (the launcher's **Get HelixSR** button opens it) and extract it. The launcher finds it in a `helixsr` folder next to `BLauncher.exe`, or in a `HelixSR-<version>` folder inside that one. Otherwise pick the folder with **Browse...** in the **HelixSR folder** row under **Advanced**.
+2. Run `helixsr-setup.bat` in that folder, once. It downloads NVIDIA's DLSS DLL from NVIDIA's GitHub after you agree (NVIDIA's license applies), builds HelixSR's network from it (about a minute) and deletes the DLL. When it asks about other games, answer `n`. Bloodborne needs nothing installed.
+3. **Advanced > Performance**: turn on **Experimental features**.
+4. **Graphics > Upscaler**: choose **HelixSR (experimental)**.
+
+The network that HelixSR builds is NVIDIA's. It stays on your PC, so do not share or upload it (HelixSR asks the same). If the game cannot use HelixSR, the launcher and the in-game menu grey it out and say why, and the game uses FSR 3.1. A failure during play also switches to FSR 3.1, and the in-game menu shows the reason. HelixSR has no sharpening of its own, so the **Sharpness** slider adds the port's own.
+
+It was checked on one GeForce RTX 4070 (HelixSR 1.8.1, 1280 x 720 upscaled to 1920 x 1080 in the Hunter's Dream, 120 to 160 FPS in the log without frame generation). It is not tested on an AMD card yet. If something goes wrong, open a [bug report](https://github.com/0xCydral/bloodborne_pc/issues/new?template=bug_report.yml) with your graphics card, `user\last_run.log` and the `helixsr.log` from the HelixSR folder. Launcher updates keep the `helixsr` folder.
+
+</details>
+
+<details>
 <summary><b>Frame generation does not seem to run.</b></summary>
 
 It is off by default, and it switches itself off when the upscaler is Off or HDR output is on. While the game runs faster than half of your screen's refresh rate, there is no room for the extra picture, so it pauses and returns when the rate falls. Set **Frame cap** to Auto and the launcher picks a cap that fits your screen. On a 144 Hz screen, for example, it works up to about 65 FPS of the game.
@@ -387,6 +406,7 @@ This fork brings together the work of several people and adds a few things of it
 | **FSR 3.1** | Every Vulkan 1.3 GPU | The fallback for everything else. |
 | **FSR 4** (INT8, model v07) | GPUs with the required Vulkan shader features, RDNA2 and RDNA3 included | The assets are in the Windows package. GPUs without the features fall back to FSR 3.1 by themselves. |
 | **FSR 4.1.1** | INT8 on any GPU with the required shader features, FP8 on AMD RDNA4 (RX 9000) | Linux: built from your own AMD DLL. See [FSR 4.1.1](#fsr-411-from-your-own-dll). Windows (experimental): through the fsr4vk provider, see [below](#fsr-411-on-windows-experimental). |
+| **HelixSR** (experimental, Windows) | GPUs with Vulkan and Direct3D 12 on the same adapter and the Win32 external memory and semaphore extensions | NVIDIA's DLSS network run as Direct3D 12 compute by the player's own, separate HelixSR DLL, through a bridge next to the Vulkan renderer (`vk_helixsr.cpp`). Not in the package. Any failure falls back to FSR 3.1; `bb-gpu-capabilities --upscalers` says why helixsr is unavailable. |
 | **XeSS** (Intel XeSS Super Resolution 2.0.2, from the XeSS SDK 3.0.2, `bin\libxess.dll`) | AMD, Intel and NVIDIA GPUs with DP4a support | A good choice where FSR 4 is slow or missing, for example Radeon RX 6000. It has no sharpener of its own: the Sharpness setting adds one. |
 | **TAA** | Every GPU | Native-resolution temporal AA. Works without an FSR model. |
 
@@ -621,10 +641,12 @@ Most players never need these. Everything here is also reachable from the launch
 | `BB_BREADCRUMBS=0` | No GPU breadcrumbs. With them, a GPU hang names the draw or dispatch it is stuck in. |
 | `BB_GPU_PROFILE=1` | GPU time per pass |
 | `BB_FSR4_PROFILE=1` | GPU time per FSR 4 pass |
-| `BB_UPSCALER=taa\|fsr3\|fsr4\|fsr411\|off\|none` | Choose the upscaler |
+| `BB_UPSCALER=taa\|fsr3\|fsr4\|fsr411\|helixsr\|off\|none` | Choose the upscaler |
 | `BB_FSR411_VARIANT=int8\|fp8\|fp8emu` | FSR 4.1.1 variant. By default FP8 where the GPU has FP8 matrices. |
 | `BB_FSR4VK_DIR=<folder>` | Windows: the folder holding fsr4vk's `amd_fidelityfx_upscaler_vk.dll` (default: `fsr4vk` next to the executable) |
 | `BB_FSR4VK=0` | Windows: do not use fsr4vk even when its DLL is installed |
+| `BB_HELIXSR_DIR=<folder>` | Windows: the folder holding HelixSR's built `amd_fidelityfx_dx12.dll` (default: `helixsr` next to the executable) |
+| `BB_HELIXSR=0` | Windows: do not use HelixSR. The launcher sets it while Experimental features is off. |
 | `BB_FRAMES_AHEAD=N` | How many frames the GPU command thread may run ahead of the GPU. 1 by default, 0 = unbounded. |
 | `BB_PRESENT_THREAD=0` | Present on the vblank thread, as before |
 | `BB_LIVE_RES=1` | Live resolution changes instead of the startup patch for outputs other than 1080p |

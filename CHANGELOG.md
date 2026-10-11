@@ -4,6 +4,21 @@ All notable changes to the Windows fork of the Bloodborne PS4 port. The format f
 
 The release pages for 1.6 to 1.6.15 were deleted on 2026-10-09. The git tags remain, and this file replaces their notes. Version 1.6.9 is folded into 1.6.10 (see there).
 
+## [Unreleased]
+
+### Added
+
+- HelixSR as an experimental upscaler on Windows. [HelixSR](https://github.com/lonewolf0622/HelixSR) is a separate, unofficial program that runs NVIDIA's DLSS upscaling network as Direct3D 12 compute shaders. The game loads your own, unmodified HelixSR DLL (`amd_fidelityfx_dx12.dll`) and runs it through a bridge next to the Vulkan renderer: a Direct3D 12 device on the same graphics card, with images and a fence shared between the two APIs. The port still picks the render size and the jitter. Nothing from HelixSR or NVIDIA is in the zip or downloaded by the launcher. You download HelixSR, run its `helixsr-setup.bat` once, turn on Advanced > Performance > Experimental features and choose HelixSR (experimental) under Graphics > Upscaler; the launcher has a **Get HelixSR** button and a **HelixSR folder** row, and finds a `helixsr` folder next to `BLauncher.exe` by itself. If the game cannot use HelixSR, the launcher and the in-game menu grey it out with the reason and the game uses FSR 3.1; a failure during play also switches to FSR 3.1. HelixSR has no sharpening of its own, so the Sharpness slider adds the port's. Checked on one GeForce RTX 4070 (HelixSR 1.8.1, 1280x720 to 1920x1080 in the Hunter's Dream, 120 to 160 FPS in the log without frame generation); not tested on an AMD card yet. `BB_HELIXSR_DIR` names the folder and `BB_HELIXSR=0` turns it off. Launcher updates keep the `helixsr` folder.
+- Holding L3+R3 for 1.5 seconds opens a small "Quit to desktop?" box over the game (Quit and Cancel; Cancel has the focus, and Circle closes it), so controller players can quit without opening the settings. The in-game menu's new **Quit to desktop** button opens the same box. Quitting saves `bbport.ini` and exits through the normal window close.
+
+### Changed
+
+- A tap of L3+R3 still opens the in-game menu, but now when you let go, so a hold can open the quit box instead.
+
+### Fixed
+
+- The in-game menu grew past the bottom of a 1080p screen, which pushed Close off it. It now stops at the screen's bottom and scrolls, and Close and Quit stay reachable.
+
 ## [1.7.1] - 2026-10-10
 
 ### Changed
