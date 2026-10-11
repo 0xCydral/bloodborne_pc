@@ -8,7 +8,10 @@
 //   ninja -C out/gpu helixsr-bridge-test
 //   out/gpu/helixsr-bridge-test.exe <absolute path of an FFX DX12 DLL>
 //
-// Exit 0 and "PASS ..." when the output matches, exit 1 and "FAIL <reason>" otherwise.
+// Besides the gradient it checks the bridge's boundaries (calls before Configure, zero and oversized
+// sizes, a DLL without FFX exports, unsupported formats), Configure twice, and a looser check of the
+// first output after each Configure. Exit 0 and "PASS ..." when every case holds, exit 1 and
+// "FAIL case '<name>' ..." otherwise.
 
 #define VK_NO_PROTOTYPES
 #ifndef NOMINMAX
@@ -36,6 +39,7 @@ namespace {
 constexpr uint32_t RenderW = 1280, RenderH = 720, OutW = 1920, OutH = 1080;
 constexpr uint32_t Frames = 16;
 constexpr float Tolerance = 0.06f;
+constexpr float FirstFrameTolerance = 0.15f; // the first output after a Configure, R and G only
 
 [[noreturn]] void Fail(const std::string& reason) {
     std::printf("FAIL %s\n", reason.c_str());
@@ -367,6 +371,171 @@ void CreateVulkan(Context& ctx) {
     Check(ctx.vk.vkCreateFence(ctx.device, &fence_info, nullptr, &ctx.fence), "vkCreateFence");
 }
 
+
+/// The game's images, left in GENERAL, and the host buffers around them.
+struct Harness {
+    Context ctx;
+    Image color, depth, motion, output;
+    Buffer staging, readback;
+    VkCommandBuffer inputs_cmd{}, output_cmd{};
+    int cases{};
+
+    void Require(bool condition, const std::string& name) {
+        if (!condition) {
+            Fail("case '" + name + "'");
+        }
+        ++cases;
+        std::printf("ok: %s\n", name.c_str());
+    }
+
+    void Setup() {
+        CreateVulkan(ctx);
+        constexpr VkImageUsageFlags transfer =
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        color = ctx.MakeImage(VK_FORMAT_R16G16B16A16_SFLOAT, RenderW, RenderH, transfer,
+                              VK_IMAGE_ASPECT_COLOR_BIT);
+        depth = ctx.MakeImage(VK_FORMAT_D32_SFLOAT_S8_UINT, RenderW, RenderH, transfer,
+                              VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+        motion = ctx.MakeImage(VK_FORMAT_R16G16_SFLOAT, RenderW, RenderH, transfer, VK_IMAGE_ASPECT_COLOR_BIT);
+        output = ctx.MakeImage(VK_FORMAT_R16G16B16A16_SFLOAT, OutW, OutH,
+                               transfer | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                               VK_IMAGE_ASPECT_COLOR_BIT);
+        staging = ctx.MakeHostBuffer(VkDeviceSize{RenderW} * RenderH * 8);
+        readback = ctx.MakeHostBuffer(VkDeviceSize{OutW} * OutH * 8);
+        inputs_cmd = ctx.MakeCommandBuffer();
+        output_cmd = ctx.MakeCommandBuffer();
+
+        VkCommandBuffer setup = ctx.MakeCommandBuffer();
+        ctx.Begin(setup);
+        ctx.ToGeneral(setup, {color, depth, motion, output});
+        const VkClearDepthStencilValue depth_value{0.5f, 0};
+        const VkImageSubresourceRange depth_range{VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0,
+                                                  1, 0, 1};
+        ctx.vk.vkCmdClearDepthStencilImage(setup, depth.image, VK_IMAGE_LAYOUT_GENERAL, &depth_value, 1,
+                                           &depth_range);
+        const VkClearColorValue zero{};
+        const VkImageSubresourceRange color_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        ctx.vk.vkCmdClearColorImage(setup, motion.image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &color_range);
+        ctx.Submit(setup, VK_NULL_HANDLE, 0, 0, true);
+    }
+
+    /// The gradient (x/w, y/h, 0.5, 1) over the first w x h texels of the colour image.
+    void FillColor(uint32_t w, uint32_t h) {
+        auto* texels = static_cast<uint16_t*>(staging.mapped);
+        for (uint32_t y = 0; y < h; ++y) {
+            for (uint32_t x = 0; x < w; ++x) {
+                uint16_t* texel = texels + (size_t{y} * w + x) * 4;
+                texel[0] = ToHalf((x + 0.5f) / w);
+                texel[1] = ToHalf((y + 0.5f) / h);
+                texel[2] = ToHalf(0.5f);
+                texel[3] = ToHalf(1.0f);
+            }
+        }
+        VkCommandBuffer cmd = ctx.MakeCommandBuffer();
+        ctx.Begin(cmd);
+        VkBufferImageCopy upload{};
+        upload.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        upload.imageExtent = {w, h, 1};
+        ctx.vk.vkCmdCopyBufferToImage(cmd, staging.buffer, color.image, VK_IMAGE_LAYOUT_GENERAL, 1, &upload);
+        ctx.Submit(cmd, VK_NULL_HANDLE, 0, 0, true);
+    }
+
+    /// No NaN or Inf anywhere; R and G (and B when `check_blue`) within `tolerance` of the gradient on
+    /// a 9x9 grid that includes the points 2 px from every edge. Returns the largest error.
+    float CheckOutput(float tolerance, bool check_blue, const std::string& label) {
+        const auto* pixels = static_cast<const uint16_t*>(readback.mapped);
+        for (size_t i = 0; i < size_t{OutW} * OutH * 4; ++i) {
+            if (i % 4 != 3 && !std::isfinite(FromHalf(pixels[i]))) {
+                Fail("case '" + label + "': the output holds NaN or Inf (texel " + std::to_string(i / 4) + ")");
+            }
+        }
+        float max_error = 0.0f;
+        for (uint32_t gy = 0; gy < 9; ++gy) {
+            for (uint32_t gx = 0; gx < 9; ++gx) {
+                const uint32_t x = 2 + gx * (OutW - 5) / 8;
+                const uint32_t y = 2 + gy * (OutH - 5) / 8;
+                const uint16_t* texel = pixels + (size_t{y} * OutW + x) * 4;
+                const float expected[3] = {(x + 0.5f) / OutW, (y + 0.5f) / OutH, 0.5f};
+                for (int c = 0; c < (check_blue ? 3 : 2); ++c) {
+                    const float error = std::fabs(FromHalf(texel[c]) - expected[c]);
+                    max_error = std::max(max_error, error);
+                    if (error > tolerance) {
+                        char text[200];
+                        std::snprintf(text, sizeof(text),
+                                      "case '%s': output (%u,%u) channel %d is %.4f, expected %.4f "
+                                      "(tolerance %.2f)",
+                                      label.c_str(), x, y, c, FromHalf(texel[c]), expected[c], tolerance);
+                        Fail(text);
+                    }
+                }
+            }
+        }
+        return max_error;
+    }
+
+    /// Frames at `render_w` x `render_h` through a configured bridge. The first output after Configure
+    /// is checked loosely, the last one tightly. Returns the last frame's largest error.
+    float RunFrames(Vulkan::HelixSr::Bridge& bridge, const std::string& label, uint32_t render_w,
+                    uint32_t render_h) {
+        FillColor(render_w, render_h);
+        std::string error;
+        float max_error = 0.0f;
+        for (uint32_t frame = 0; frame < Frames; ++frame) {
+            ctx.Begin(inputs_cmd);
+            const uint64_t inputs_ready =
+                bridge.RecordInputs(inputs_cmd, color.image, depth.image, motion.image, render_w, render_h);
+            if (!inputs_ready) {
+                Fail("case '" + label + "': RecordInputs returned 0");
+            }
+            ctx.Submit(inputs_cmd, bridge.Semaphore(), 0, inputs_ready, false);
+
+            Vulkan::HelixSr::FrameParams params;
+            params.jitter_x = Halton(frame % 18 + 1, 2) - 0.5f;
+            params.jitter_y = Halton(frame % 18 + 1, 3) - 0.5f;
+            params.render_w = render_w;
+            params.render_h = render_h;
+            params.frame_ms = 16.6f;
+            params.pre_exposure = 1.0f;
+            params.near_plane = 0.05f;
+            params.far_plane = 3000.0f;
+            params.fov_y = 1.0f;
+            params.reset = frame == 0;
+            const uint64_t done = bridge.Dispatch(inputs_ready, params, &error);
+            if (!done) {
+                Fail("case '" + label + "': Dispatch (frame " + std::to_string(frame) + "): " + error);
+            }
+
+            const bool download = frame == 0 || frame + 1 == Frames;
+            ctx.Begin(output_cmd);
+            bridge.RecordOutput(output_cmd, output.image);
+            if (download) {
+                VkBufferImageCopy copy{};
+                copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                copy.imageExtent = {OutW, OutH, 1};
+                ctx.vk.vkCmdCopyImageToBuffer(output_cmd, output.image, VK_IMAGE_LAYOUT_GENERAL,
+                                              readback.buffer, 1, &copy);
+                VkMemoryBarrier to_host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+                to_host.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                to_host.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+                ctx.vk.vkCmdPipelineBarrier(output_cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                            VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &to_host, 0, nullptr, 0,
+                                            nullptr);
+            }
+            ctx.Submit(output_cmd, bridge.Semaphore(), done, 0, true);
+            if (frame == 0) {
+                CheckOutput(FirstFrameTolerance, false, label + ", first frame after Configure");
+                ++cases;
+                std::printf("ok: %s, first frame after Configure\n", label.c_str());
+            } else if (frame + 1 == Frames) {
+                max_error = CheckOutput(Tolerance, true, label + ", last frame");
+                ++cases;
+                std::printf("ok: %s, last frame\n", label.c_str());
+            }
+        }
+        return max_error;
+    }
+};
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -380,50 +549,9 @@ int main(int argc, char** argv) {
     }
     const std::string dll_name = dll.filename().string();
 
-    Context ctx;
-    CreateVulkan(ctx);
-
-    // The game's images, all left in GENERAL.
-    constexpr VkImageUsageFlags transfer = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    const Image color = ctx.MakeImage(VK_FORMAT_R16G16B16A16_SFLOAT, RenderW, RenderH, transfer,
-                                      VK_IMAGE_ASPECT_COLOR_BIT);
-    const Image depth = ctx.MakeImage(VK_FORMAT_D32_SFLOAT_S8_UINT, RenderW, RenderH, transfer,
-                                      VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
-    const Image motion = ctx.MakeImage(VK_FORMAT_R16G16_SFLOAT, RenderW, RenderH, transfer,
-                                       VK_IMAGE_ASPECT_COLOR_BIT);
-    const Image output = ctx.MakeImage(
-        VK_FORMAT_R16G16B16A16_SFLOAT, OutW, OutH,
-        transfer | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-
-    const Buffer staging = ctx.MakeHostBuffer(VkDeviceSize{RenderW} * RenderH * 8);
-    auto* texels = static_cast<uint16_t*>(staging.mapped);
-    for (uint32_t y = 0; y < RenderH; ++y) {
-        for (uint32_t x = 0; x < RenderW; ++x) {
-            uint16_t* texel = texels + (size_t{y} * RenderW + x) * 4;
-            texel[0] = ToHalf((x + 0.5f) / RenderW);
-            texel[1] = ToHalf((y + 0.5f) / RenderH);
-            texel[2] = ToHalf(0.5f);
-            texel[3] = ToHalf(1.0f);
-        }
-    }
-    const Buffer readback = ctx.MakeHostBuffer(VkDeviceSize{OutW} * OutH * 8);
-
-    VkCommandBuffer setup = ctx.MakeCommandBuffer();
-    ctx.Begin(setup);
-    ctx.ToGeneral(setup, {color, depth, motion, output});
-    VkBufferImageCopy upload{};
-    upload.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    upload.imageExtent = {RenderW, RenderH, 1};
-    ctx.vk.vkCmdCopyBufferToImage(setup, staging.buffer, color.image, VK_IMAGE_LAYOUT_GENERAL, 1, &upload);
-    const VkClearDepthStencilValue depth_value{0.5f, 0};
-    const VkImageSubresourceRange depth_range{VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1,
-                                              0, 1};
-    ctx.vk.vkCmdClearDepthStencilImage(setup, depth.image, VK_IMAGE_LAYOUT_GENERAL, &depth_value, 1,
-                                       &depth_range);
-    const VkClearColorValue zero{};
-    const VkImageSubresourceRange color_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    ctx.vk.vkCmdClearColorImage(setup, motion.image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &color_range);
-    ctx.Submit(setup, VK_NULL_HANDLE, 0, 0, true);
+    Harness h;
+    h.Setup();
+    Context& ctx = h.ctx;
 
     Vulkan::HelixSr::DeviceInfo info;
     info.instance = ctx.instance;
@@ -435,90 +563,90 @@ int main(int argc, char** argv) {
         ctx.get_instance_proc(ctx.instance, "vkGetDeviceProcAddr"));
     std::memcpy(info.luid, ctx.luid, sizeof(info.luid));
 
-    Vulkan::HelixSr::Bridge bridge;
+    constexpr VkFormat ColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    constexpr VkFormat DepthFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
+    constexpr VkFormat MotionFormat = VK_FORMAT_R16G16_SFLOAT;
+    // HIGH_DYNAMIC_RANGE | AUTO_EXPOSURE (FfxApiCreateContextUpscaleFlags).
+    constexpr uint32_t CreateFlags = (1u << 0) | (1u << 5);
     std::string error;
+
+    // A DLL that is not an FFX provider.
+    {
+        Vulkan::HelixSr::Bridge not_ffx;
+        const bool init = not_ffx.Init(info, L"C:\\Windows\\System32\\version.dll", &error);
+        h.Require(!init && error.find("ffxCreateContext") != std::string::npos,
+                  "Init rejects a DLL without FFX exports and names the missing one");
+        error.clear();
+        h.Require(!not_ffx.Configure(RenderW, RenderH, OutW, OutH, ColorFormat, DepthFormat, MotionFormat,
+                                     CreateFlags, &error) && !error.empty(),
+                  "Configure fails after a failed Init");
+    }
+
+    Vulkan::HelixSr::Bridge bridge;
     if (!bridge.Init(info, dll.c_str(), &error)) {
         Fail("Init: " + error);
     }
-    // HIGH_DYNAMIC_RANGE | AUTO_EXPOSURE (FfxApiCreateContextUpscaleFlags).
-    constexpr uint32_t CreateFlags = (1u << 0) | (1u << 5);
-    if (!bridge.Configure(RenderW, RenderH, OutW, OutH, VK_FORMAT_R16G16B16A16_SFLOAT, CreateFlags, &error)) {
+
+    // Before Configure.
+    ctx.Begin(h.inputs_cmd);
+    h.Require(bridge.RecordInputs(h.inputs_cmd, h.color.image, h.depth.image, h.motion.image, RenderW,
+                                  RenderH) == 0,
+              "RecordInputs returns 0 before Configure");
+    Vulkan::HelixSr::FrameParams params;
+    params.render_w = RenderW;
+    params.render_h = RenderH;
+    error.clear();
+    h.Require(bridge.Dispatch(1, params, &error) == 0 && !error.empty(),
+              "Dispatch fails with an error before Configure");
+
+    if (!bridge.Configure(RenderW, RenderH, OutW, OutH, ColorFormat, DepthFormat, MotionFormat, CreateFlags,
+                          &error)) {
         Fail("Configure: " + error);
     }
 
-    VkCommandBuffer inputs_cmd = ctx.MakeCommandBuffer();
-    VkCommandBuffer output_cmd = ctx.MakeCommandBuffer();
-    for (uint32_t frame = 0; frame < Frames; ++frame) {
-        ctx.Begin(inputs_cmd);
-        const uint64_t inputs_ready =
-            bridge.RecordInputs(inputs_cmd, color.image, depth.image, motion.image, RenderW, RenderH);
-        if (!inputs_ready) {
-            Fail("RecordInputs returned 0");
-        }
-        ctx.Submit(inputs_cmd, bridge.Semaphore(), 0, inputs_ready, false);
-
-        Vulkan::HelixSr::FrameParams params;
-        params.jitter_x = Halton(frame % 18 + 1, 2) - 0.5f;
-        params.jitter_y = Halton(frame % 18 + 1, 3) - 0.5f;
-        params.render_w = RenderW;
-        params.render_h = RenderH;
-        params.frame_ms = 16.6f;
-        params.pre_exposure = 1.0f;
-        params.near_plane = 0.05f;
-        params.far_plane = 3000.0f;
-        params.fov_y = 1.0f;
-        params.reset = frame == 0;
-        const uint64_t done = bridge.Dispatch(inputs_ready, params, &error);
-        if (!done) {
-            Fail("Dispatch (frame " + std::to_string(frame) + "): " + error);
-        }
-
-        ctx.Begin(output_cmd);
-        bridge.RecordOutput(output_cmd, output.image);
-        if (frame + 1 == Frames) {
-            VkBufferImageCopy download{};
-            download.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            download.imageExtent = {OutW, OutH, 1};
-            ctx.vk.vkCmdCopyImageToBuffer(output_cmd, output.image, VK_IMAGE_LAYOUT_GENERAL,
-                                          readback.buffer, 1, &download);
-            VkMemoryBarrier to_host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-            to_host.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            to_host.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-            ctx.vk.vkCmdPipelineBarrier(output_cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                        VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &to_host, 0, nullptr, 0, nullptr);
-        }
-        ctx.Submit(output_cmd, bridge.Semaphore(), done, 0, true);
+    // Boundaries of a configured bridge. None of them may record anything or change its state.
+    h.Require(bridge.RecordInputs(h.inputs_cmd, h.color.image, h.depth.image, h.motion.image, 0, RenderH) == 0,
+              "RecordInputs returns 0 for a zero width");
+    h.Require(bridge.RecordInputs(h.inputs_cmd, h.color.image, h.depth.image, h.motion.image, RenderW, 0) == 0,
+              "RecordInputs returns 0 for a zero height");
+    h.Require(bridge.RecordInputs(h.inputs_cmd, h.color.image, h.depth.image, h.motion.image, RenderW + 1,
+                                  RenderH) == 0,
+              "RecordInputs returns 0 above the configured maximum width");
+    h.Require(bridge.RecordInputs(h.inputs_cmd, h.color.image, h.depth.image, h.motion.image, RenderW,
+                                  RenderH + 1) == 0,
+              "RecordInputs returns 0 above the configured maximum height");
+    error.clear();
+    h.Require(bridge.Dispatch(0, params, &error) == 0 && !error.empty(),
+              "Dispatch(0) fails with an error");
+    const struct {
+        VkFormat color, depth, motion;
+        const char* name;
+    } rejected[] = {
+        {VK_FORMAT_R8_UNORM, DepthFormat, MotionFormat, "an unsupported colour format"},
+        {ColorFormat, VK_FORMAT_D16_UNORM, MotionFormat, "an unsupported depth format"},
+        {ColorFormat, DepthFormat, VK_FORMAT_R8G8_UNORM, "an unsupported motion vector format"},
+    };
+    for (const auto& bad : rejected) {
+        error.clear();
+        h.Require(!bridge.Configure(RenderW, RenderH, OutW, OutH, bad.color, bad.depth, bad.motion,
+                                    CreateFlags, &error) && !error.empty(),
+                  std::string{"Configure fails for "} + bad.name);
     }
 
-    const auto* pixels = static_cast<const uint16_t*>(readback.mapped);
-    for (size_t i = 0; i < size_t{OutW} * OutH * 4; ++i) {
-        if (i % 4 != 3 && !std::isfinite(FromHalf(pixels[i]))) {
-            Fail("the output holds NaN or Inf (texel " + std::to_string(i / 4) + ")");
-        }
+    // The rejected Configure calls left the setup alone: the first configuration still renders.
+    const float first_error = h.RunFrames(bridge, "1280x720->1920x1080", RenderW, RenderH);
+
+    // Configure again with a smaller render size.
+    constexpr uint32_t SmallW = 960, SmallH = 540;
+    if (!bridge.Configure(SmallW, SmallH, OutW, OutH, ColorFormat, DepthFormat, MotionFormat, CreateFlags,
+                          &error)) {
+        Fail("second Configure: " + error);
     }
-    float max_error = 0.0f;
-    for (uint32_t gy = 0; gy < 9; ++gy) {
-        for (uint32_t gx = 0; gx < 9; ++gx) {
-            const uint32_t x = 2 + gx * (OutW - 5) / 8;
-            const uint32_t y = 2 + gy * (OutH - 5) / 8;
-            const uint16_t* texel = pixels + (size_t{y} * OutW + x) * 4;
-            const float expected[3] = {(x + 0.5f) / OutW, (y + 0.5f) / OutH, 0.5f};
-            for (int c = 0; c < 3; ++c) {
-                const float error_c = std::fabs(FromHalf(texel[c]) - expected[c]);
-                max_error = std::max(max_error, error_c);
-                if (error_c > Tolerance) {
-                    char text[160];
-                    std::snprintf(text, sizeof(text),
-                                  "output (%u,%u) channel %d is %.4f, expected %.4f (tolerance %.2f)", x, y,
-                                  c, FromHalf(texel[c]), expected[c], Tolerance);
-                    Fail(text);
-                }
-            }
-        }
-    }
+    const float second_error = h.RunFrames(bridge, "960x540->1920x1080", SmallW, SmallH);
 
     bridge.Destroy();
-    std::printf("PASS %s %ux%u->%ux%u max_err=%.4f\n", dll_name.c_str(), RenderW, RenderH, OutW, OutH,
-                max_error);
+    std::printf("PASS %s %ux%u->%ux%u max_err=%.4f (reconfigured %ux%u->%ux%u max_err=%.4f, %d cases)\n",
+                dll_name.c_str(), RenderW, RenderH, OutW, OutH, first_error, SmallW, SmallH, OutW, OutH,
+                second_error, h.cases);
     return 0;
 }

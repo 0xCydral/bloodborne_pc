@@ -53,26 +53,39 @@ public:
     bool Init(const DeviceInfo& info, const wchar_t* dll_path, std::string* error);
 
     /// (Re)creates the FFX context and the shared images. The caller guarantees the GPU is idle.
+    /// Supported formats, anything else fails with a message before the current setup is touched:
+    /// colour R16G16B16A16_SFLOAT, R8G8B8A8_UNORM/SRGB, B10G11R11_UFLOAT_PACK32 or
+    /// A2B10G10R10_UNORM_PACK32; depth D32_SFLOAT or D32_SFLOAT_S8_UINT (the depth aspect is copied);
+    /// motion vectors R16G16_SFLOAT. The images given to RecordInputs must use these formats.
+    /// Fails, leaving the old setup in place, when D3D12 may still be using it (bounded wait) or the
+    /// bridge is broken.
     bool Configure(uint32_t max_render_w, uint32_t max_render_h, uint32_t out_w, uint32_t out_h,
-                   VkFormat color_format, uint32_t ffx_create_flags, std::string* error);
+                   VkFormat color_format, VkFormat depth_format, VkFormat motion_format,
+                   uint32_t ffx_create_flags, std::string* error);
 
-    /// Copies the game's images (all VK_IMAGE_LAYOUT_GENERAL) into the shared inputs and releases
-    /// them to D3D12. Returns the timeline value the caller's submit must SIGNAL on Semaphore(),
-    /// 0 when not configured or the size exceeds the configured maximum. Only the colour and motion
-    /// formats given to Configure are supported; the depth image must have a 32-bit float depth aspect.
+    /// Copies the game's images (all VK_IMAGE_LAYOUT_GENERAL, in the formats given to Configure) into
+    /// the shared inputs and releases them to D3D12. The first call after Configure also gives the
+    /// shared output its layout. Returns the timeline value the caller's submit must SIGNAL on
+    /// Semaphore(); 0 (nothing recorded) when not configured, the bridge is broken, or the size is
+    /// zero or above the configured maximum.
     uint64_t RecordInputs(VkCommandBuffer cmd, VkImage color, VkImage depth, VkImage motion,
                           uint32_t render_w, uint32_t render_h);
 
     /// D3D12 waits for `inputs_ready` on the GPU, runs ffxDispatch and signals. Returns the value
-    /// the caller's next submit must WAIT on, or 0 on error.
+    /// the caller's next submit must WAIT on, or 0 on error. `inputs_ready` must be a value
+    /// RecordInputs returned. After a failed Signal or Wait, or a removed device, the bridge is
+    /// broken: every later Dispatch and Configure fails and RecordInputs returns 0.
     uint64_t Dispatch(uint64_t inputs_ready, const FrameParams& params, std::string* error);
 
-    /// Acquires the shared output and copies it into `output` (left in GENERAL).
+    /// Acquires the shared output and copies it into `output` (left in GENERAL). Records nothing
+    /// before the first RecordInputs after Configure.
     void RecordOutput(VkCommandBuffer cmd, VkImage output);
 
     VkSemaphore Semaphore() const;
 
-    /// Waits (bounded) for D3D12's last dispatch, then releases everything. The DLL stays loaded.
+    /// Waits (bounded) for D3D12's last dispatch, then releases everything. If that wait fails (or the
+    /// bridge is broken) the FFX context, the D3D12 objects and the shared Vulkan objects are leaked
+    /// on purpose, since the GPU may still use them. The DLL stays loaded.
     void Destroy();
 
 private:

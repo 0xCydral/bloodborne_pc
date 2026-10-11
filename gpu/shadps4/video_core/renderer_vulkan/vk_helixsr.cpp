@@ -44,6 +44,10 @@ public:
             ptr = nullptr;
         }
     }
+    /// Drops the pointer without releasing it: the object may still be executing on the GPU.
+    void Leak() {
+        ptr = nullptr;
+    }
     T** Put() {
         Reset();
         return &ptr;
@@ -214,9 +218,27 @@ struct Bridge::Impl {
     VkDeviceMemory depth_memory{};
     uint32_t max_w{}, max_h{}, out_w{}, out_h{};
     bool logged_dispatch{};
+    /// Set when the fence can no longer be trusted (a failed Signal or Wait, a removed device).
+    /// Nothing is dispatched or reconfigured after that; Destroy() leaks instead of releasing.
+    bool broken{};
+    std::string broken_reason;
 
     ~Impl() {
         Destroy();
+    }
+
+    void Break(std::string reason) {
+        broken = true;
+        broken_reason = std::move(reason);
+    }
+
+    void Fault(std::string* error, std::string reason) {
+        Break(reason);
+        Fail(error, std::move(reason));
+    }
+
+    bool CheckNotBroken(std::string* error) const {
+        return !broken || Fail(error, "the bridge is broken: " + broken_reason);
     }
 
     static bool Fail(std::string* error, std::string message) {
@@ -228,7 +250,14 @@ struct Bridge::Impl {
     }
 
     bool WaitFence(uint64_t value, std::string* error) {
-        if (!fence || fence->GetCompletedValue() >= value) {
+        if (!fence) {
+            return true;
+        }
+        const uint64_t completed = fence->GetCompletedValue();
+        if (completed == UINT64_MAX) { // what D3D12 reports once the device is removed
+            return Fail(error, "the D3D12 device was removed");
+        }
+        if (completed >= value) {
             return true;
         }
         if (const HRESULT hr = fence->SetEventOnCompletion(value, event); FAILED(hr)) {
@@ -319,9 +348,12 @@ struct Bridge::Impl {
         ffx_destroy = reinterpret_cast<PfnFfxDestroyContext>(GetProcAddress(ffx_module, "ffxDestroyContext"));
         ffx_dispatch = reinterpret_cast<PfnFfxDispatch>(GetProcAddress(ffx_module, "ffxDispatch"));
         // ffxConfigure and ffxQuery are part of the API too; a DLL without them is not a provider.
-        if (!ffx_create || !ffx_destroy || !ffx_dispatch || !GetProcAddress(ffx_module, "ffxConfigure") ||
-            !GetProcAddress(ffx_module, "ffxQuery")) {
-            return Fail(error, "the DLL is not an FFX API provider (ffx* exports missing)");
+        for (const char* name : {"ffxCreateContext", "ffxDestroyContext", "ffxConfigure", "ffxQuery",
+                                 "ffxDispatch"}) {
+            if (!GetProcAddress(ffx_module, name)) {
+                return Fail(error, std::string{"the DLL is not an FFX API provider: it does not export "} +
+                                       name);
+            }
         }
         return CreateD3D12(error) && CreateSharedFence(error);
     }
@@ -630,13 +662,32 @@ struct Bridge::Impl {
     }
 
     bool Configure(uint32_t max_render_w, uint32_t max_render_h, uint32_t output_w, uint32_t output_h,
-                   VkFormat color_format, uint32_t create_flags, std::string* error) {
+                   VkFormat color_format, VkFormat depth_format, VkFormat motion_format,
+                   uint32_t create_flags, std::string* error) {
         if (!device) {
             return Fail(error, "the bridge is not initialised");
+        }
+        if (!CheckNotBroken(error)) {
+            return false;
         }
         if (!max_render_w || !max_render_h || !output_w || !output_h) {
             return Fail(error, "sizes must not be zero");
         }
+        // Everything is checked before the current configuration is touched.
+        const FormatInfo* color_info = FindFormat(color_format);
+        if (!color_info) {
+            return Fail(error, "unsupported colour format " + std::to_string(static_cast<int>(color_format)));
+        }
+        if (depth_format != VK_FORMAT_D32_SFLOAT && depth_format != VK_FORMAT_D32_SFLOAT_S8_UINT) {
+            return Fail(error, "unsupported depth format " + std::to_string(static_cast<int>(depth_format)) +
+                                   " (D32_SFLOAT or D32_SFLOAT_S8_UINT only)");
+        }
+        if (motion_format != VK_FORMAT_R16G16_SFLOAT) {
+            return Fail(error, "unsupported motion vector format " +
+                                   std::to_string(static_cast<int>(motion_format)) +
+                                   " (R16G16_SFLOAT only)");
+        }
+        // A failed wait means D3D12 may still use the old images: keep them and fail.
         if (!WaitFence(last_dispatch, error)) {
             return false;
         }
@@ -650,7 +701,7 @@ struct Bridge::Impl {
         const VkImageUsageFlags output_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                                                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
         const bool ok =
-            CreateShared(color, color_format, max_w, max_h, input_usage, false, error) &&
+            CreateShared(color, color_info->game, max_w, max_h, input_usage, false, error) &&
             CreateShared(depth, VK_FORMAT_R32_SFLOAT, max_w, max_h, input_usage, false, error) &&
             CreateShared(motion, VK_FORMAT_R16G16_SFLOAT, max_w, max_h, input_usage, false, error) &&
             CreateShared(output, VK_FORMAT_R16G16B16A16_SFLOAT, out_w, out_h, output_usage, true, error) &&
@@ -685,7 +736,7 @@ struct Bridge::Impl {
 
     uint64_t RecordInputs(VkCommandBuffer cmd, VkImage game_color, VkImage game_depth,
                           VkImage game_motion, uint32_t render_w, uint32_t render_h) {
-        if (!context || !render_w || !render_h || render_w > max_w || render_h > max_h) {
+        if (broken || !context || !render_w || !render_h || render_w > max_w || render_h > max_h) {
             return 0;
         }
         const uint32_t family = info.queue_family;
@@ -732,16 +783,24 @@ struct Bridge::Impl {
                                     &from_buffer);
 
         // Release to D3D12; the execution dependency lets the game write its images again.
-        std::array<VkImageMemoryBarrier, 3> release;
-        for (size_t i = 0; i < release.size(); ++i) {
-            release[i] = ImageBarrier(inputs[i]->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                      VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_WRITE_BIT, 0, family,
-                                      VK_QUEUE_FAMILY_EXTERNAL);
-            inputs[i]->layout = VK_IMAGE_LAYOUT_GENERAL;
+        std::array<VkImageMemoryBarrier, 4> release;
+        uint32_t release_count = 0;
+        for (SharedImage* input : inputs) {
+            release[release_count++] =
+                ImageBarrier(input->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+                             VK_ACCESS_TRANSFER_WRITE_BIT, 0, family, VK_QUEUE_FAMILY_EXTERNAL);
+            input->layout = VK_IMAGE_LAYOUT_GENERAL;
+        }
+        // The first frame after Configure: give the output its layout now, before D3D12 writes it.
+        // RecordOutput then acquires from GENERAL, and no UNDEFINED transition can discard the result.
+        if (output.layout == VK_IMAGE_LAYOUT_UNDEFINED) {
+            release[release_count++] =
+                ImageBarrier(output.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, family,
+                             VK_QUEUE_FAMILY_EXTERNAL);
+            output.layout = VK_IMAGE_LAYOUT_GENERAL;
         }
         vk.cmd_pipeline_barrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
-                                0, nullptr, 0, nullptr, static_cast<uint32_t>(release.size()),
-                                release.data());
+                                0, nullptr, 0, nullptr, release_count, release.data());
         return ++counter;
     }
 
@@ -760,12 +819,19 @@ struct Bridge::Impl {
     }
 
     uint64_t Dispatch(uint64_t inputs_ready, const FrameParams& params, std::string* error) {
+        if (!CheckNotBroken(error)) {
+            return 0;
+        }
         if (!context) {
             Fail(error, "the bridge is not configured");
             return 0;
         }
         if (!params.render_w || !params.render_h || params.render_w > max_w || params.render_h > max_h) {
             Fail(error, "render size is outside the configured maximum");
+            return 0;
+        }
+        if (!inputs_ready || inputs_ready > counter) {
+            Fail(error, "inputs_ready is not a value RecordInputs returned");
             return 0;
         }
         const uint32_t slot = static_cast<uint32_t>(frame % AllocatorCount);
@@ -832,17 +898,28 @@ struct Bridge::Impl {
         }
 
         ID3D12CommandList* lists[] = {list.Get()};
-        queue->Wait(fence.Get(), inputs_ready);
-        queue->ExecuteCommandLists(1, lists);
-        const uint64_t signal = ++counter;
-        hr = queue->Signal(fence.Get(), signal);
+        hr = queue->Wait(fence.Get(), inputs_ready);
         if (FAILED(hr)) {
-            Fail(error, Hr("ID3D12CommandQueue::Signal", hr));
+            Fault(error, Hr("ID3D12CommandQueue::Wait", hr));
             return 0;
         }
+        queue->ExecuteCommandLists(1, lists);
+        const uint64_t signal = ++counter;
+        // The work is in flight from here on: the allocator slot and Destroy() must wait for it even
+        // if the Signal below fails.
         slot_value[slot] = signal;
         last_dispatch = signal;
         ++frame;
+        hr = queue->Signal(fence.Get(), signal);
+        if (FAILED(hr)) {
+            Fault(error, Hr("ID3D12CommandQueue::Signal", hr));
+            return 0;
+        }
+        hr = device->GetDeviceRemovedReason();
+        if (hr != S_OK) {
+            Fault(error, Hr("the D3D12 device was removed", hr));
+            return 0;
+        }
         if (!logged_dispatch) {
             logged_dispatch = true;
             std::printf("HelixSR: first dispatch submitted (%ux%u -> %ux%u)\n", params.render_w,
@@ -852,7 +929,9 @@ struct Bridge::Impl {
     }
 
     void RecordOutput(VkCommandBuffer cmd, VkImage game_output) {
-        if (!context) {
+        // RecordInputs gave the output its GENERAL layout before D3D12 first wrote it; without that
+        // call there is no result to read.
+        if (broken || !context || output.layout != VK_IMAGE_LAYOUT_GENERAL) {
             return;
         }
         const uint32_t family = info.queue_family;
@@ -861,7 +940,7 @@ struct Bridge::Impl {
         memory.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         // The contents are D3D12's result: keep them across the ownership transfer.
         VkImageMemoryBarrier acquire =
-            ImageBarrier(output.image, output.layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0,
+            ImageBarrier(output.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0,
                          VK_ACCESS_TRANSFER_READ_BIT, VK_QUEUE_FAMILY_EXTERNAL, family);
         vk.cmd_pipeline_barrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
                                 1, &memory, 0, nullptr, 1, &acquire);
@@ -879,17 +958,58 @@ struct Bridge::Impl {
         VkImageMemoryBarrier release =
             ImageBarrier(output.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, 0, 0,
                          family, VK_QUEUE_FAMILY_EXTERNAL);
-        output.layout = VK_IMAGE_LAYOUT_GENERAL;
         vk.cmd_pipeline_barrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
                                 1, &done, 0, nullptr, 1, &release);
     }
 
+    void ResetState() {
+        counter = last_dispatch = frame = 0;
+        slot_value.fill(0);
+        logged_dispatch = false;
+        broken = false;
+        broken_reason.clear();
+    }
+
+    /// The GPU did not finish (timeout, failed wait, removed device, untrusted fence). The context,
+    /// the D3D12 objects and the shared resources may still be executing or referenced, so they are
+    /// leaked on purpose. The Vulkan images, memory, buffer and semaphore wrap those same resources
+    /// and the fence, and a Vulkan submit waiting on that fence may still be pending, so the caller's
+    /// idle guarantee cannot be proven for them either: they are leaked too. A leak costs memory;
+    /// releasing something the GPU still uses is a use-after-free.
+    void Abandon() {
+        std::printf("HelixSR: the GPU did not finish; leaking the FFX context, the D3D12 objects and the "
+                    "shared Vulkan objects\n");
+        context = nullptr;
+        for (SharedImage* shared : {&color, &depth, &motion, &output}) {
+            shared->resource.Leak();
+            shared->image = nullptr;
+            shared->memory = nullptr;
+            shared->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+            shared->format = nullptr;
+        }
+        depth_buffer = nullptr;
+        depth_memory = nullptr;
+        list.Leak();
+        for (auto& allocator : allocators) {
+            allocator.Leak();
+        }
+        queue.Leak();
+        fence.Leak();
+        device.Leak();
+        factory.Reset();
+        event = nullptr;
+        semaphore = nullptr;
+        ResetState();
+    }
+
     void Destroy() {
-        if (!device) {
+        std::string wait_error;
+        if (broken || !WaitFence(last_dispatch, &wait_error)) {
+            if (device) {
+                Abandon();
+            }
             return;
         }
-        std::string wait_error;
-        WaitFence(last_dispatch, &wait_error);
         DestroyResources();
         list.Reset();
         for (auto& allocator : allocators) {
@@ -907,9 +1027,7 @@ struct Bridge::Impl {
             vk.destroy_semaphore(info.device, semaphore, nullptr);
             semaphore = nullptr;
         }
-        counter = last_dispatch = frame = 0;
-        slot_value.fill(0);
-        logged_dispatch = false;
+        ResetState();
     }
 };
 
@@ -927,9 +1045,10 @@ bool Bridge::Init(const DeviceInfo& info, const wchar_t* dll_path, std::string* 
 }
 
 bool Bridge::Configure(uint32_t max_render_w, uint32_t max_render_h, uint32_t out_w, uint32_t out_h,
-                       VkFormat color_format, uint32_t ffx_create_flags, std::string* error) {
-    return impl->Configure(max_render_w, max_render_h, out_w, out_h, color_format, ffx_create_flags,
-                           error);
+                       VkFormat color_format, VkFormat depth_format, VkFormat motion_format,
+                       uint32_t ffx_create_flags, std::string* error) {
+    return impl->Configure(max_render_w, max_render_h, out_w, out_h, color_format, depth_format,
+                           motion_format, ffx_create_flags, error);
 }
 
 uint64_t Bridge::RecordInputs(VkCommandBuffer cmd, VkImage color, VkImage depth, VkImage motion,
@@ -971,7 +1090,8 @@ bool Bridge::Init(const DeviceInfo&, const wchar_t*, std::string* error) {
     return false;
 }
 
-bool Bridge::Configure(uint32_t, uint32_t, uint32_t, uint32_t, VkFormat, uint32_t, std::string* error) {
+bool Bridge::Configure(uint32_t, uint32_t, uint32_t, uint32_t, VkFormat, VkFormat, VkFormat, uint32_t,
+                       std::string* error) {
     if (error) {
         *error = "the HelixSR bridge needs Windows (Direct3D 12)";
     }
