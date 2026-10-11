@@ -255,7 +255,8 @@ struct Bridge::Impl {
         }
         const uint64_t completed = fence->GetCompletedValue();
         if (completed == UINT64_MAX) { // what D3D12 reports once the device is removed
-            return Fail(error, "the D3D12 device was removed");
+            Fault(error, "the D3D12 device was removed");
+            return false;
         }
         if (completed >= value) {
             return true;
@@ -1003,6 +1004,12 @@ struct Bridge::Impl {
     }
 
     void Destroy() {
+        // A bridge that was never initialised, or whose Init failed before creating anything, owns
+        // nothing. Past this point every release below is guarded by its own handle, so what a
+        // failed Init half-created is released and nothing else is touched.
+        if (!device && !factory && !event && !semaphore) {
+            return;
+        }
         std::string wait_error;
         if (broken || !WaitFence(last_dispatch, &wait_error)) {
             if (device) {

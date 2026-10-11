@@ -580,7 +580,15 @@ int main(int argc, char** argv) {
         h.Require(!not_ffx.Configure(RenderW, RenderH, OutW, OutH, ColorFormat, DepthFormat, MotionFormat,
                                      CreateFlags, &error) && !error.empty(),
                   "Configure fails after a failed Init");
+        not_ffx.Destroy();
+        not_ffx.Destroy();
+        h.Require(not_ffx.Semaphore() == VK_NULL_HANDLE, "a failed-Init bridge can be destroyed twice");
     }
+    {
+        Vulkan::HelixSr::Bridge unused;
+        unused.Destroy();
+        h.Require(unused.Semaphore() == VK_NULL_HANDLE, "a default-constructed bridge can be destroyed");
+    } // and its destructor runs without Init
 
     Vulkan::HelixSr::Bridge bridge;
     if (!bridge.Init(info, dll.c_str(), &error)) {
@@ -618,6 +626,11 @@ int main(int argc, char** argv) {
     error.clear();
     h.Require(bridge.Dispatch(0, params, &error) == 0 && !error.empty(),
               "Dispatch(0) fails with an error");
+    // No frame has been recorded since Configure, so any value is above what RecordInputs returned.
+    error.clear();
+    h.Require(bridge.Dispatch(1'000'000, params, &error) == 0 &&
+                  error.find("inputs_ready") != std::string::npos,
+              "Dispatch above any RecordInputs value fails on inputs_ready");
     const struct {
         VkFormat color, depth, motion;
         const char* name;
@@ -645,6 +658,12 @@ int main(int argc, char** argv) {
     const float second_error = h.RunFrames(bridge, "960x540->1920x1080", SmallW, SmallH);
 
     bridge.Destroy();
+    bridge.Destroy();
+    ctx.Begin(h.inputs_cmd);
+    h.Require(bridge.Semaphore() == VK_NULL_HANDLE &&
+                  bridge.RecordInputs(h.inputs_cmd, h.color.image, h.depth.image, h.motion.image, RenderW,
+                                      RenderH) == 0,
+              "a configured bridge can be destroyed twice and then does nothing");
     std::printf("PASS %s %ux%u->%ux%u max_err=%.4f (reconfigured %ux%u->%ux%u max_err=%.4f, %d cases)\n",
                 dll_name.c_str(), RenderW, RenderH, OutW, OutH, first_error, SmallW, SmallH, OutW, OutH,
                 second_error, h.cases);
