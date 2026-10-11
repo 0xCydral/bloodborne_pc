@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 
 #include <vk_mem_alloc.h>
@@ -194,6 +195,15 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
         problem = !xess ? "libxess.dll is not installed" : xess->Problem();
         BbSettings::ConfigureXessSupport(xess && xess->Available(), problem.c_str());
     }
+    {
+        std::string problem = HelixSr::Problem();
+        if (problem.empty() && !instance.HasHelixSrInterop()) {
+            problem = "the Vulkan driver cannot share images with Direct3D 12";
+        } else if (problem.empty() && !instance.IsDeviceLuidValid()) {
+            problem = "the GPU reports no LUID";
+        }
+        BbSettings::ConfigureHelixSrSupport(problem.empty(), problem.c_str());
+    }
     // Available unless BB_UPSCALER=none; on/off and the parameters are the menu's settings.
     const char* env = std::getenv("BB_UPSCALER");
     enabled = !(env && std::strcmp(env, "none") == 0);
@@ -241,6 +251,10 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
 }
 
 TemporalUpscaler::~TemporalUpscaler() {
+    if (helixsr) {
+        scheduler.Finish();
+        helixsr->Destroy();
+    }
     if (resources_ready) scheduler.Finish();
     if (context) {
         scheduler.Finish();
@@ -255,16 +269,17 @@ bool TemporalUpscaler::Active() const {
             BbSettings::IsFsr4(BbSettings::Get().upscaler) ||
             BbSettings::Get().upscaler == BbSettings::UpscalerTaa ||
             BbSettings::Get().upscaler == BbSettings::UpscalerDlss ||
-            BbSettings::Get().upscaler == BbSettings::UpscalerXess) &&
+            BbSettings::Get().upscaler == BbSettings::UpscalerXess ||
+            BbSettings::Get().upscaler == BbSettings::UpscalerHelixSr) &&
            !BbToggle::Disabled(1u << 24);
 }
 
 bool TemporalUpscaler::ReactiveOn() const {
     // FSR 4 takes no reactive mask itself: the mask blends its output afterwards
-    // (RecordFsr4Reactive). DLSS and XeSS take none here: the opaque snapshot and the mask pass
-    // would be wasted.
+    // (RecordFsr4Reactive). DLSS, XeSS and HelixSR take none here: the opaque snapshot and the mask
+    // pass would be wasted.
     return BbSettings::Get().reactive && !BbToggle::Disabled(1u << 27) && !UseDlss() && !UseXess() &&
-           BbSettings::Get().upscaler != BbSettings::UpscalerTaa;
+           !UseHelixSr() && BbSettings::Get().upscaler != BbSettings::UpscalerTaa;
 }
 
 void TemporalUpscaler::RecordFsr4Reactive(vk::CommandBuffer cmdbuf, vk::ImageView color, u32 w,
@@ -377,6 +392,10 @@ bool TemporalUpscaler::OnFrameStart() {
         scheduler.Finish();
         fsr4 = std::make_unique<Fsr4Upscaler>(instance, scheduler);
         if (BbSettings::IsFsr4(upscaler)) BbSettings::Get().fsr4_problem = nullptr;
+        // The GPU is idle: the bridge frees its shared images, and a new HelixSR choice starts over.
+        helixsr.reset();
+        helixsr_setup.reset();
+        helixsr_failed = false;
     }
     if (applied_upscaler != upscaler) fsr4_failed = false; // retry after a menu change
     // Dynamic scene resolution scaling (live preset switching) works on all GPUs.
@@ -435,8 +454,8 @@ void TemporalUpscaler::OnDispatch(u64 cs_hash) {
 }
 
 bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
-    // DLSS and XeSS, like FSR 4, have their own context: no portable FSR 3 context is made.
-    const bool use_fsr4 = UseFsr4() || UseDlss() || UseXess();
+    // DLSS, XeSS and HelixSR, like FSR 4, have their own context: no portable FSR 3 context is made.
+    const bool use_fsr4 = UseFsr4() || UseDlss() || UseXess() || UseHelixSr();
     const bool use_taa = BbSettings::Get().upscaler == BbSettings::UpscalerTaa;
     if (use_taa && (w != ow || h != oh)) {
         std::printf("TAA: remove BB_RENDER_RES to use native-resolution TAA\n");
@@ -496,6 +515,11 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
     }
 
     const auto allocator = instance.GetAllocator();
+    // HelixSR's bridge copies the motion vectors out and its result into output_image.
+    const vk::ImageUsageFlags helixsr_motion =
+        instance.HasHelixSrInterop() ? vk::ImageUsageFlagBits::eTransferSrc : vk::ImageUsageFlags{};
+    const vk::ImageUsageFlags helixsr_output =
+        instance.HasHelixSrInterop() ? vk::ImageUsageFlagBits::eTransferDst : vk::ImageUsageFlags{};
     motion_view.reset();
     output_view.reset();
     motion_image = VideoCore::UniqueImage(device, allocator);
@@ -507,7 +531,7 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
         .arrayLayers = 1,
         .samples = vk::SampleCountFlagBits::e1,
         .tiling = vk::ImageTiling::eOptimal,
-        .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+        .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled | helixsr_motion,
         .initialLayout = vk::ImageLayout::eUndefined,
     });
     output_image = VideoCore::UniqueImage(device, allocator);
@@ -520,7 +544,7 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
         .samples = vk::SampleCountFlagBits::e1,
         .tiling = vk::ImageTiling::eOptimal,
         .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
-                 vk::ImageUsageFlagBits::eTransferSrc,
+                 vk::ImageUsageFlagBits::eTransferSrc | helixsr_output,
         .initialLayout = vk::ImageLayout::eUndefined,
     });
     output_view = Check(device.createImageViewUnique({
@@ -1164,8 +1188,9 @@ void TemporalUpscaler::Run() {
         input_depth_view = d.view;
         input_depth_layout = d.layout;
     }
-    const auto cmdbuf = scheduler.CommandBuffer();
-    const Breadcrumbs::Scope crumb{cmdbuf, scheduler.CrumbStream(), "TAA"};
+    auto cmdbuf = scheduler.CommandBuffer(); // replaced after HelixSR submits it
+    std::optional<Breadcrumbs::Scope> crumb;
+    crumb.emplace(cmdbuf, scheduler.CrumbStream(), "TAA");
 
     const auto own_barrier = [&](vk::Image image, vk::ImageLayout old_layout,
                                  vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access,
@@ -1223,6 +1248,14 @@ void TemporalUpscaler::Run() {
             {input_color, input_color_view, color.info.pixel_format, vk::ImageAspectFlagBits::eColor, w, h},
             {input_depth, input_depth_view, depth_format, vk::ImageAspectFlagBits::eDepth, w, h}, w, h,
             ow, oh, frame_ms, true);
+    } else if (UseHelixSr()) {
+        crumb.reset(); // its end mark would go into the command buffer the bridge submits
+        dispatched = RecordHelixSr(
+            {input_color, input_color_view, color.info.pixel_format, vk::ImageAspectFlagBits::eColor, w, h},
+            {input_depth, input_depth_view, depth_format, vk::ImageAspectFlagBits::eDepth, w, h}, w, h,
+            ow, oh, frame_ms, true);
+        cmdbuf = scheduler.CommandBuffer();
+        crumb.emplace(cmdbuf, scheduler.CrumbStream(), "TAA");
     } else if (UseXess()) {
         dispatched = RecordXess(
             cmdbuf,
@@ -1812,9 +1845,9 @@ void TemporalUpscaler::RunScaled() {
     const bool was_reset = reset;
 
     // bbport: FSR 4 writes its HDR-format output, copied into the output-size UI image.
-    if (UseFsr4() || UseDlss() || UseXess() ||
+    if (UseFsr4() || UseDlss() || UseXess() || UseHelixSr() ||
         BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
-        const auto cmdbuf = scheduler.CommandBuffer(); // after the commands recorded above
+        auto cmdbuf = scheduler.CommandBuffer(); // after the commands recorded above
         barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
                 vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
                 vk::ImageLayout::eGeneral, all, rw);
@@ -1828,6 +1861,13 @@ void TemporalUpscaler::RunScaled() {
                              {depth_image, depth_view, depth_format, vk::ImageAspectFlagBits::eDepth,
                               source_width, source_height},
                              w, h, ow, oh, frame_ms, false);
+        } else if (UseHelixSr()) {
+            ok4 = RecordHelixSr({color_image, color_view, color.info.pixel_format,
+                                 vk::ImageAspectFlagBits::eColor, source_width, source_height},
+                                {depth_image, depth_view, depth_format, vk::ImageAspectFlagBits::eDepth,
+                                 source_width, source_height},
+                                w, h, ow, oh, frame_ms, false);
+            cmdbuf = scheduler.CommandBuffer();
         } else if (UseXess()) {
             ok4 = RecordXess(cmdbuf,
                              {color_image, color_view, color.info.pixel_format,
@@ -2346,9 +2386,10 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
 }
 
 bool TemporalUpscaler::FullRangeSharpen() const {
-    // XeSS and FSR 4.1.1 through fsr4vk have no RCAS of their own: ExtraSharpen covers 0..2. Only while
-    // fsr4vk is the upscaler in use: after it failed (fsr4_failed) FSR 3.1 runs, with its own RCAS.
-    return UseXess() || (BbSettings::Get().upscaler == BbSettings::UpscalerFsr411 && UseFsr4() &&
+    // XeSS, HelixSR (sharpening is not asked of it) and FSR 4.1.1 through fsr4vk have no RCAS of their
+    // own: ExtraSharpen covers 0..2. Only while fsr4vk is the upscaler in use: after it failed
+    // (fsr4_failed) FSR 3.1 runs, with its own RCAS.
+    return UseXess() || UseHelixSr() || (BbSettings::Get().upscaler == BbSettings::UpscalerFsr411 && UseFsr4() &&
                          !instance.IsFsr411Supported());
 }
 
@@ -2356,6 +2397,98 @@ bool TemporalUpscaler::UseDlss() const {
     const Dlss* dlss = Dlss::Get();
     return BbSettings::Get().upscaler == BbSettings::UpscalerDlss && dlss && dlss->Available() &&
            !dlss_failed;
+}
+
+bool TemporalUpscaler::UseHelixSr() const {
+    return BbSettings::Get().upscaler == BbSettings::UpscalerHelixSr &&
+           BbSettings::Get().helixsr_supported && !helixsr_failed;
+}
+
+bool TemporalUpscaler::RecordHelixSr(const Dlss::Resource& color, const Dlss::Resource& depth, u32 w,
+                                     u32 h, u32 ow, u32 oh, float frame_ms, bool hdr) {
+    std::string error;
+    const auto fail = [&] {
+        std::printf("Upscaler: HelixSR failed: %s; using FSR 3.1\n", error.c_str());
+        BbSettings::Get().upscaler = BbSettings::UpscalerFsr3;
+        helixsr_failed = true; // EnsureResources creates the FSR 3 context next frame
+        reset = true;
+        return false;
+    };
+    const auto dll = HelixSr::DllPath();
+    if (!helixsr) {
+        helixsr = std::make_unique<HelixSr::Bridge>();
+        HelixSr::DeviceInfo info{
+            .instance = instance.GetInstance(),
+            .physical = instance.GetPhysicalDevice(),
+            .device = instance.GetDevice(),
+            .queue_family = instance.GetGraphicsQueueFamilyIndex(),
+            .get_instance_proc = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetInstanceProcAddr,
+            .get_device_proc = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr,
+        };
+        const auto luid = instance.GetDeviceLuid();
+        std::copy(luid.begin(), luid.end(), info.luid);
+        if (!helixsr->Init(info, dll.c_str(), &error)) {
+            return fail();
+        }
+    }
+    const HelixSrSetup setup{w, h, ow, oh, color.format, depth.format, hdr};
+    if (helixsr_setup != setup) {
+        // The previous images may still be used by submitted work; the open command buffer stays
+        // unsubmitted (Finish() would send it).
+        scheduler.WaitSubmittedWork();
+        // FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE: what the FSR 3.1
+        // context of the same path is created with.
+        const u32 flags = hdr ? 1u | 32u : 0u;
+        helixsr_setup.reset();
+        if (!helixsr->Configure(w, h, ow, oh, static_cast<VkFormat>(color.format),
+                                static_cast<VkFormat>(depth.format), VK_FORMAT_R16G16_SFLOAT, flags,
+                                &error)) {
+            return fail();
+        }
+        helixsr_setup = setup;
+        reset = true;
+        const auto u8 = std::filesystem::path{dll}.u8string();
+        std::printf("Upscaler: HelixSR %ux%u->%ux%u via %s\n", w, h, ow, oh,
+                    std::string{reinterpret_cast<const char*>(u8.data()), u8.size()}.c_str());
+    }
+
+    // Inputs: copied into the shared images and released to Direct3D 12, signalling `ready`.
+    const u64 ready = helixsr->RecordInputs(
+        static_cast<VkCommandBuffer>(scheduler.CommandBuffer()), static_cast<VkImage>(color.image),
+        static_cast<VkImage>(depth.image), static_cast<VkImage>(vk::Image(motion_image)), w, h);
+    if (!ready) {
+        error = "the bridge recorded no inputs (broken, or the size is outside its setup)";
+        return fail();
+    }
+    SubmitInfo inputs{};
+    inputs.AddSignal(vk::Semaphore(helixsr->Semaphore()), ready);
+    scheduler.Flush(inputs);
+
+    // The jitter and motion vectors FSR 3 gets: render pixels, current to previous.
+    const float sign = BbToggle::Disabled(1u << 26) ? -1.0f : 1.0f;
+    const HelixSr::FrameParams params{
+        .jitter_x = sign * jitter[0],
+        .jitter_y = sign * jitter[1],
+        .render_w = w,
+        .render_h = h,
+        .frame_ms = frame_ms,
+        .near_plane = camera_motion.Near(),
+        .far_plane = 3000.0f,
+        .fov_y = camera_motion.VerticalFov(),
+        .reset = reset,
+    };
+    const u64 done = helixsr->Dispatch(ready, params, &error);
+    if (!done) {
+        return fail();
+    }
+
+    // The result: a submission of its own that waits for Direct3D 12 (as its only wait in slot 0).
+    helixsr->RecordOutput(static_cast<VkCommandBuffer>(scheduler.CommandBuffer()),
+                          static_cast<VkImage>(vk::Image(output_image)));
+    SubmitInfo output{};
+    output.AddWait(vk::Semaphore(helixsr->Semaphore()), done);
+    scheduler.Flush(output);
+    return true;
 }
 
 bool TemporalUpscaler::UseXess() const {

@@ -17,6 +17,7 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_fsr4vk.h"
+#include "video_core/renderer_vulkan/vk_helixsr.h"
 #include "video_core/renderer_vulkan/vk_xess.h"
 
 #include <vk_mem_alloc.h>
@@ -472,6 +473,16 @@ bool Instance::CreateDevice() {
         add_extension(VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
         LOG_INFO(Render_Vulkan, "fsr4vk: {} found, its device features are enabled",
                  Fsr4Vk::LibraryPathUtf8());
+    }
+    // bbport: HelixSR (vk_helixsr.cpp) shares images and a fence with a Direct3D 12 device: both Win32
+    // external extensions, requested only when the DLL is installed and the device has both. The names
+    // are spelled out: the Win32 header is not included in this file.
+    constexpr std::string_view external_memory_win32 = "VK_KHR_external_memory_win32";
+    constexpr std::string_view external_semaphore_win32 = "VK_KHR_external_semaphore_win32";
+    if (HelixSr::Problem().empty() && extension_available(external_memory_win32) &&
+        extension_available(external_semaphore_win32)) {
+        helixsr_interop = add_extension(external_memory_win32) && add_extension(external_semaphore_win32);
+        LOG_INFO(Render_Vulkan, "HelixSR: installed, the Win32 external memory and semaphore extensions are enabled");
     }
     // bbport: DLSS (optional bridge DLL) needs its own device extensions on NVIDIA GPUs.
     std::vector<const char*> dlss_extensions;

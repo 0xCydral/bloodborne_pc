@@ -11,6 +11,14 @@
 
 namespace Vulkan::HelixSr {
 
+/// Where the player's HelixSR DLL is: `%BB_HELIXSR_DIR%\amd_fidelityfx_dx12.dll` when the variable
+/// is set, else `<exe dir>\helixsr\amd_fidelityfx_dx12.dll`. Empty off Windows.
+std::wstring DllPath();
+
+/// Empty when HelixSR can be used, else the reason for the menu: turned off (BB_HELIXSR=0), the DLL
+/// is missing, or its network is not built (no helixsr_setup.json next to the DLL).
+std::string Problem();
+
 /// What the bridge needs from the renderer's Vulkan device. Every Vulkan function the bridge calls
 /// is loaded through the two procedure getters, so it never links against the Vulkan loader.
 struct DeviceInfo {

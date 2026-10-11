@@ -241,7 +241,8 @@ void Menu() {
     const char* upscalers[] = {
         BbSettings::MenuText("Off", "Выкл"), "FSR 3.1", "FSR 4 (INT8)", "FSR 4.1.1 (INT8)",
         BbSettings::MenuText("TAA (native anti-aliasing)", "TAA (нативное сглаживание)"),
-        "DLSS (NVIDIA RTX)", "XeSS (Intel, any GPU)"};
+        "DLSS (NVIDIA RTX)", "XeSS (Intel, any GPU)",
+        BbSettings::MenuText("HelixSR (experimental)", "HelixSR (экспериментально)")};
     int upscaler = s.upscaler;
     if (ImGui::BeginCombo(BbSettings::MenuText("Upscaler", "Апскейлер"), upscalers[upscaler])) {
         for (int i = 0; i < BbSettings::UpscalerCount; ++i) {
@@ -249,6 +250,7 @@ void Menu() {
                                    : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
                                    : i == BbSettings::UpscalerDlss   ? s.dlss_supported.load()
                                    : i == BbSettings::UpscalerXess   ? s.xess_supported.load()
+                                   : i == BbSettings::UpscalerHelixSr ? s.helixsr_supported.load()
                                                                      : true;
             ImGui::BeginDisabled(!supported);
             if (ImGui::Selectable(upscalers[i], i == upscaler)) {
@@ -268,6 +270,10 @@ void Menu() {
     }
     if (const char* problem = s.xess_problem.load(); problem && upscaler == BbSettings::UpscalerXess) {
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "XeSS: %s", problem);
+    }
+    if (const char* problem = s.helixsr_problem.load();
+        problem && upscaler == BbSettings::UpscalerHelixSr) {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "HelixSR: %s", problem);
     }
     if (const char* problem = s.fsr4_problem.load()) {
         ImGui::PushTextWrapPos();
@@ -606,6 +612,7 @@ void FpsCounter() {
                                 : s.upscaler == BbSettings::UpscalerTaa    ? "TAA"
                                 : s.upscaler == BbSettings::UpscalerDlss   ? "DLSS"
                                 : s.upscaler == BbSettings::UpscalerXess   ? "XeSS"
+                                : s.upscaler == BbSettings::UpscalerHelixSr ? "HelixSR"
                                                                            : "";
     if (s.fg_active) {
         // Game frames -> frames shown: the interval of the shown images is half the game's.

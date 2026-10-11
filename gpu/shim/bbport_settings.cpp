@@ -207,6 +207,21 @@ void ConfigureXessSupport(bool available, const char* problem) {
     }
 }
 
+void ConfigureHelixSrSupport(bool available, const char* problem) {
+    auto& v = Get();
+    v.helixsr_supported = available;
+    static std::string kept;
+    kept = problem ? problem : "";
+    v.helixsr_problem = available || kept.empty() ? nullptr : kept.c_str();
+    if (v.upscaler == UpscalerHelixSr && !available) {
+        std::printf("Upscaler: HelixSR unavailable: %s; using FSR 3.1\n",
+                    kept.empty() ? "amd_fidelityfx_dx12.dll missing" : kept.c_str());
+        v.upscaler = UpscalerFsr3;
+    } else if (v.upscaler == UpscalerHelixSr) {
+        std::printf("Upscaler: HelixSR selected\n");
+    }
+}
+
 bool FixedRenderSession() {
     const char* size = std::getenv("BB_RENDER_RES");
     return size && size[0];
@@ -329,7 +344,8 @@ const char* PresetName(int preset) {
 }
 
 const char* UpscalerName(int upscaler) {
-    static constexpr const char* names[UpscalerCount] = {"off", "fsr3", "fsr4", "fsr411", "taa", "dlss", "xess"};
+    static constexpr const char* names[UpscalerCount] = {"off", "fsr3", "fsr4", "fsr411", "taa", "dlss", "xess",
+                                                        "helixsr"};
     return names[std::clamp(upscaler, 0, UpscalerCount - 1)];
 }
 

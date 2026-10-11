@@ -57,6 +57,16 @@ int main() {
     s.menu_y = -1.0f;
     BbSettings::Load();
     assert(s.menu_x == 0.625f && s.menu_y == 0.125f && s.upscaler == BbSettings::UpscalerFsr411);
+
+    // HelixSR is appended to the enum: the saved name round-trips and the other indices stay.
+    assert(BbSettings::UpscalerXess == 6 && BbSettings::UpscalerHelixSr == 7 &&
+           BbSettings::UpscalerCount == 8);
+    s.upscaler = BbSettings::UpscalerHelixSr;
+    BbSettings::Save();
+    assert(Read(path).find("upscaler=helixsr\n") != std::string::npos);
+    s.upscaler = BbSettings::UpscalerOff;
+    BbSettings::Load();
+    assert(s.upscaler == BbSettings::UpscalerHelixSr);
     unlink(path);
     std::puts("PASS: settings save keeps other keys, menu position");
 }

@@ -324,6 +324,25 @@ public:
         return IsFsr4Int8Supported() && (mixed_float_dot_product || fsr4vk);
     }
 
+    /// bbport: HelixSR's bridge (vk_helixsr.h) can share images and a fence with Direct3D 12:
+    /// VK_KHR_external_memory_win32 and VK_KHR_external_semaphore_win32 are enabled, requested only
+    /// when HelixSR is installed.
+    bool HasHelixSrInterop() const {
+        return helixsr_interop;
+    }
+
+    /// bbport: the LUID of the physical device, which the D3D12 device of the bridge must match.
+    std::array<u8, 8> GetDeviceLuid() const {
+        std::array<u8, 8> luid{};
+        for (u32 i = 0; i < luid.size(); ++i) {
+            luid[i] = vk11_props.deviceLUID[i];
+        }
+        return luid;
+    }
+    bool IsDeviceLuidValid() const {
+        return vk11_props.deviceLUIDValid;
+    }
+
     /// bbport: robustBufferAccess is enabled on the device (descriptor sizes depend on it).
     bool IsRobustBufferAccessEnabled() const {
         return features.robustBufferAccess;
@@ -622,6 +641,7 @@ private:
     bool compute_shader_derivatives{};
     bool mixed_float_dot_product{}; // bbport: VK_VALVE_shader_mixed_float_dot_product (FSR 4.1.1)
     bool fsr4vk{};                  // bbport: the device features of the fsr4vk provider are enabled
+    bool helixsr_interop{};         // bbport: the Win32 external memory and semaphore extensions are enabled
     bool cooperative_matrix{};      // bbport: VK_KHR_cooperative_matrix (FSR 4.1.1 FP8 variant)
     bool shader_float8{};           // bbport: VK_EXT_shader_float8 with FP8 matrices (RDNA4)
     bool supports_memory_budget{};

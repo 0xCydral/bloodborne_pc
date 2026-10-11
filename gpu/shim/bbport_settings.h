@@ -10,7 +10,8 @@
 namespace BbSettings {
 
 enum Upscaler : int { UpscalerOff = 0, UpscalerFsr3 = 1, UpscalerFsr4 = 2, UpscalerFsr411 = 3,
-                      UpscalerTaa = 4, UpscalerDlss = 5, UpscalerXess = 6, UpscalerCount };
+                      UpscalerTaa = 4, UpscalerDlss = 5, UpscalerXess = 6, UpscalerHelixSr = 7,
+                      UpscalerCount };
 /// FSR 4 v07 or FSR 4.1.1: the same inputs, settings and placement in the frame.
 inline bool IsFsr4(int upscaler) {
     return upscaler == UpscalerFsr4 || upscaler == UpscalerFsr411;
@@ -92,6 +93,10 @@ struct Values {
     /// XeSS (libxess.dll, any GPU with DP4a) is ready, or why not (null before the device exists).
     std::atomic<bool> xess_supported{false};
     std::atomic<const char*> xess_problem{nullptr};
+    /// HelixSR (the player's own amd_fidelityfx_dx12.dll through a Direct3D 12 bridge, Windows) is
+    /// ready, or why not (null before the device exists).
+    std::atomic<bool> helixsr_supported{false};
+    std::atomic<const char*> helixsr_problem{nullptr};
     /// FSR 3.1 frame generation (vk_frame_generation.h): one interpolated frame between every
     /// two game frames, on top of the selected upscaler. Off by default (bbport.ini
     /// frame_generation, BB_FRAME_GEN).
@@ -123,6 +128,8 @@ void ConfigureUpscalerSupport(bool fsr4, bool fsr411);
 void ConfigureDlssSupport(bool available, const char* problem);
 /// After device creation: XeSS availability; an XeSS setting falls back to FSR 3.1 without it.
 void ConfigureXessSupport(bool available, const char* problem);
+/// After device creation: HelixSR availability; a HelixSR setting falls back to FSR 3.1 without it.
+void ConfigureHelixSrSupport(bool available, const char* problem);
 /// Startup-patched scene dimensions cannot change until run.sh prepares a new image.
 bool FixedRenderSession();
 int RenderPreset();

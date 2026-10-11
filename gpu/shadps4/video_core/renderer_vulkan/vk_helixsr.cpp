@@ -2,7 +2,9 @@
 
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
 
 #include "video_core/renderer_vulkan/vk_helixsr.h"
 
@@ -1038,6 +1040,41 @@ struct Bridge::Impl {
     }
 };
 
+namespace {
+
+std::filesystem::path Directory() {
+    // The wide environment: a folder with a non-ASCII name reads the same whatever the ANSI code page is.
+    if (const wchar_t* dir = _wgetenv(L"BB_HELIXSR_DIR"); dir && dir[0]) {
+        return dir;
+    }
+    std::wstring path(MAX_PATH, L'\0');
+    path.resize(GetModuleFileNameW(nullptr, path.data(), DWORD(path.size())));
+    return std::filesystem::path{path}.parent_path() / "helixsr";
+}
+
+} // namespace
+
+std::wstring DllPath() {
+    return (Directory() / L"amd_fidelityfx_dx12.dll").wstring();
+}
+
+std::string Problem() {
+    if (const char* setting = std::getenv("BB_HELIXSR"); setting && setting[0] == '0') {
+        return "turned off: Experimental features is off in the launcher";
+    }
+    const auto dir = Directory();
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(dir / L"amd_fidelityfx_dx12.dll", error)) {
+        const auto u8 = dir.u8string();
+        return "HelixSR is not installed: amd_fidelityfx_dx12.dll is not in " +
+               std::string{reinterpret_cast<const char*>(u8.data()), u8.size()};
+    }
+    if (!std::filesystem::is_regular_file(dir / L"helixsr_setup.json", error)) {
+        return "HelixSR's network is not built: run helixsr-setup.bat in its folder once";
+    }
+    return {};
+}
+
 Bridge::Bridge() : impl{std::make_unique<Impl>()} {}
 Bridge::~Bridge() = default;
 
@@ -1084,6 +1121,14 @@ void Bridge::Destroy() {
 #else // !_WIN32
 
 namespace Vulkan::HelixSr {
+
+std::wstring DllPath() {
+    return {};
+}
+
+std::string Problem() {
+    return "Windows only";
+}
 
 struct Bridge::Impl {};
 

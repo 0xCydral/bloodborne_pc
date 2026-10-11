@@ -15,6 +15,7 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -22,6 +23,7 @@
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_fsr4.h"
+#include "video_core/renderer_vulkan/vk_helixsr.h"
 #include "video_core/renderer_vulkan/vk_xess.h"
 #include "video_core/texture_cache/image.h"
 
@@ -196,6 +198,15 @@ private:
                     bool hdr);
     /// bbport: XeSS selected and ready (libxess.dll, a GPU with DP4a).
     [[nodiscard]] bool UseXess() const;
+    /// bbport: HelixSR selected and ready (the player's amd_fidelityfx_dx12.dll through a Direct3D 12
+    /// bridge, vk_helixsr.h).
+    [[nodiscard]] bool UseHelixSr() const;
+    /// Runs HelixSR on `color` and `depth` (General layout) and the motion vectors, the result in
+    /// output_image (General). The bridge splits the frame in two submissions around the Direct3D 12
+    /// dispatch, so the command buffer the caller held is submitted: fetch a new one afterwards. On a
+    /// failure FSR 3.1 takes over.
+    bool RecordHelixSr(const Dlss::Resource& color, const Dlss::Resource& depth, u32 w, u32 h,
+                       u32 ow, u32 oh, float frame_ms, bool hdr);
     /// The upscaler has no sharpening of its own: ExtraSharpen covers the menu's whole 0..2.
     [[nodiscard]] bool FullRangeSharpen() const;
     /// Records XeSS into `cmdbuf` (output in General). `hdr`: linear scene color input.
@@ -288,6 +299,17 @@ private:
     bool fsr4_failed = false;
     bool dlss_failed = false;
     bool xess_failed = false;
+    bool helixsr_failed = false;
+    /// The bridge, made at the first HelixSR frame and destroyed after scheduler.Finish() (the provider
+    /// changes, or the device goes away); `helixsr_setup` is what it is configured for.
+    struct HelixSrSetup {
+        u32 w, h, ow, oh;
+        vk::Format color, depth;
+        bool hdr;
+        bool operator==(const HelixSrSetup&) const = default;
+    };
+    std::unique_ptr<HelixSr::Bridge> helixsr;
+    std::optional<HelixSrSetup> helixsr_setup;
     VideoCore::UniqueImage motion_image;
     VideoCore::UniqueImage output_image;
     vk::UniqueImageView motion_view;

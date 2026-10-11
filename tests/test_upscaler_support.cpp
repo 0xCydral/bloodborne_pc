@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <unistd.h>
 #include "bbport_settings.h"
@@ -67,6 +68,28 @@ int main() {
             }
         }
     }
+    // HelixSR: a saved choice stays when the bridge is available; without it FSR 3.1 runs and the
+    // reason is kept for the menu.
+    for (bool available : {false, true}) {
+        FILE* config = std::fopen(path, "w");
+        assert(config);
+        std::fprintf(config, "upscaler=helixsr\npreset=1\n");
+        std::fclose(config);
+        Load();
+        assert(s.upscaler == UpscalerHelixSr);
+        for (int pass = 0; pass < 2; ++pass) {
+            ConfigureHelixSrSupport(available, "HelixSR is not installed");
+            assert(s.helixsr_supported == available);
+            assert(s.upscaler == (available ? UpscalerHelixSr : UpscalerFsr3));
+            const char* problem = s.helixsr_problem.load();
+            assert(available ? problem == nullptr
+                             : problem && std::strcmp(problem, "HelixSR is not installed") == 0);
+        }
+    }
+    ConfigureHelixSrSupport(false, nullptr); // no reason given: none is shown
+    assert(!s.helixsr_problem.load());
+    ConfigureHelixSrSupport(true, nullptr);
+
     s.startup_preset = Quality;
     s.startup_upscaler = UpscalerFsr3;
     s.upscaler = UpscalerFsr3;
