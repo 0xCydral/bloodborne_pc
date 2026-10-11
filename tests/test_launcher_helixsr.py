@@ -1,5 +1,6 @@
 """The launcher's HelixSR rules: where its folder is found, when the entry can be picked and why not, what the
 game is told, and what happens to a saved choice that cannot run any more."""
+import queue
 import sys
 import tempfile
 import unittest
@@ -273,6 +274,183 @@ class CapabilityRowTests(unittest.TestCase):
         helixsr = (renderer / 'vk_helixsr.cpp').read_text(encoding='utf-8')
         self.assertIn(f'"{launcher.HELIXSR_GPU_REASON}"', upscaler)
         self.assertIn(f'"{launcher.HELIXSR_UNBUILT_REASON}"', helixsr)
+
+
+class Var:
+    """A tk variable's get/set."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def get(self):
+        return self.value
+
+    def set(self, value):
+        self.value = value
+
+
+@unittest.skipUnless(sys.platform == 'win32', 'the Windows launcher')
+class InstallFunctionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.port = Path(self.tmp.name) / 'port'
+        patcher = mock.patch.object(launcher, 'PORT_DIR', self.port)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_declined_runs_nothing(self):
+        with mock.patch.object(launcher.fetch_helixsr, 'install') as install:
+            self.assertIsNone(launcher.install_helixsr(False))
+        install.assert_not_called()
+
+    def test_consented_installs_into_the_port_helixsr_folder(self):
+        lines, steps = [], []
+        with mock.patch.object(launcher.fetch_helixsr, 'install') as install:
+            self.assertEqual(launcher.install_helixsr(True, steps.append, lines.append, True), '')
+        args = install.call_args[0]
+        self.assertEqual(args[0], self.port / 'helixsr')
+        self.assertEqual((args[1], args[2], args[4], args[5]), (steps.append, lines.append, launcher.NO_WINDOW, True))
+
+    def test_failures_come_back_as_their_reason(self):
+        for error in (launcher.fetch_helixsr.FetchError('the zip is damaged'), OSError('disk full')):
+            with mock.patch.object(launcher.fetch_helixsr, 'install', side_effect=error):
+                self.assertEqual(launcher.install_helixsr(True), str(error))
+
+    def test_a_build_without_the_helper_says_so(self):
+        with mock.patch.object(launcher, 'fetch_helixsr', None), mock.patch.object(launcher, 'FETCH_HELIXSR_ERROR', 'boom'):
+            self.assertIn('boom', launcher.install_helixsr(True))
+            self.assertIn('boom', launcher.helixsr_install_problem())
+
+    def test_built_means_the_setup_wrote_its_file(self):
+        self.assertFalse(launcher.helixsr_built(None))
+        self.assertFalse(launcher.helixsr_built(install(self.port / 'a', built=False)))
+        self.assertTrue(launcher.helixsr_built(install(self.port / 'b')))
+
+    def test_the_consent_names_the_license_the_dll_and_the_downloads_in_both_languages(self):
+        for language in ('en', 'ru'):
+            with mock.patch.object(launcher, 'LANG', language):
+                text = launcher.helixsr_consent_text()
+            for part in ('https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt', '310.7.0', '150', '%LOCALAPPDATA%\\HelixSR'):
+                self.assertIn(part, text)
+        self.assertRegex(text, '[а-я]')  # the last one was Russian
+
+
+@unittest.skipUnless(sys.platform == 'win32', 'the Windows launcher')
+class InstallButtonTests(unittest.TestCase):
+    """The window's methods run on a stand-in for self: no Tk."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.port = Path(self.tmp.name) / 'port'
+        patcher = mock.patch.object(launcher, 'PORT_DIR', self.port)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.vars = {'experimental': Var(False), 'helixsr_dir': Var(''), 'upscaler': Var('fsr3')}
+        self.window = mock.MagicMock()
+        self.window.process = None
+        self.window.installing_helixsr = False
+        self.window.var = lambda key, _store: self.vars[key]
+        self.window.upscaler_states.return_value = {'helixsr': ('ok', '')}
+        self.window.ui_calls = queue.Queue()
+
+    def test_declining_the_dialog_starts_nothing(self):
+        self.window.messagebox.askyesno.return_value = False
+        with mock.patch.object(launcher.threading, 'Thread') as thread, \
+                mock.patch.object(launcher, 'install_helixsr') as install:
+            launcher.Launcher.start_helixsr_install(self.window)
+        self.window.messagebox.askyesno.assert_called_once()
+        self.assertIn('NVIDIA', self.window.messagebox.askyesno.call_args[0][1])
+        thread.assert_not_called()
+        install.assert_not_called()
+        self.assertFalse(self.window.installing_helixsr)
+
+    def test_a_running_game_blocks_it_before_any_question(self):
+        self.window.process = object()
+        launcher.Launcher.start_helixsr_install(self.window)
+        self.window.messagebox.askyesno.assert_not_called()
+        self.window.messagebox.showinfo.assert_called_once()
+
+    def start(self, built):
+        """Presses the button (answered Yes) with the worker run inline; returns install_helixsr's mock."""
+        if built:
+            install(self.port / 'helixsr')
+        self.window.messagebox.askyesno.return_value = True
+
+        class Inline:  # runs the worker where it is started
+            def __init__(self, target, daemon=None):
+                self.target = target
+
+            def start(self):
+                self.target()
+        with mock.patch.object(launcher.threading, 'Thread', Inline),                 mock.patch.object(launcher, 'install_helixsr', return_value='') as run:
+            launcher.Launcher.start_helixsr_install(self.window)
+        return run
+
+    def test_yes_runs_the_install_off_the_window_thread_and_reports_back(self):
+        run = self.start(built=False)
+        self.assertTrue(run.call_args[0][0])  # consented
+        self.assertFalse(run.call_args[0][3])  # a first install does not force a download
+        self.assertTrue(self.window.installing_helixsr)  # until the result is handled on the Tk thread
+        self.window.ui_calls.get_nowait()()
+        self.window.helixsr_install_done.assert_called_once_with('')
+
+    def test_reinstall_forces_a_fresh_download(self):
+        self.assertTrue(self.start(built=True).call_args[0][3])
+
+    def test_success_turns_experimental_on_and_selects_helixsr(self):
+        install(self.port / 'helixsr')
+        launcher.Launcher.helixsr_install_done(self.window, '')
+        self.assertTrue(self.vars['experimental'].get())
+        self.assertEqual(self.vars['upscaler'].get(), 'helixsr')
+        text = self.window.status.configure.call_args.kwargs['text']
+        self.assertIn('Experimental features turned on', text)
+        self.window.apply_upscaler_support.assert_called()
+        self.assertFalse(self.window.installing_helixsr)
+
+    def test_success_leaves_experimental_alone_when_it_was_on(self):
+        install(self.port / 'helixsr')
+        self.vars['experimental'].set(True)
+        launcher.Launcher.helixsr_install_done(self.window, '')
+        self.assertNotIn('Experimental', self.window.status.configure.call_args.kwargs['text'])
+
+    def test_a_chosen_folder_without_a_built_helixsr_gives_way_to_the_new_copy(self):
+        install(self.port / 'helixsr')
+        self.vars['helixsr_dir'].set(str(Path(self.tmp.name) / 'elsewhere'))
+        launcher.Launcher.helixsr_install_done(self.window, '')
+        self.assertEqual(self.vars['helixsr_dir'].get(), '')
+        keep = install(Path(self.tmp.name) / 'mine')
+        self.vars['helixsr_dir'].set(str(keep))
+        launcher.Launcher.helixsr_install_done(self.window, '')
+        self.assertEqual(self.vars['helixsr_dir'].get(), str(keep))
+
+    def test_a_gpu_that_cannot_run_it_keeps_the_upscaler_and_says_why(self):
+        install(self.port / 'helixsr')
+        self.window.upscaler_states.return_value = {'helixsr': ('no', launcher.HELIXSR_GPU_REASON)}
+        launcher.Launcher.helixsr_install_done(self.window, '')
+        self.assertEqual(self.vars['upscaler'].get(), 'fsr3')
+        self.assertIn('Direct3D 12', self.window.status.configure.call_args.kwargs['text'])
+
+    def test_failure_shows_the_reason_and_changes_no_setting(self):
+        self.window.installing_helixsr = True
+        launcher.Launcher.helixsr_install_done(self.window, 'download failed: HTTP 404')
+        self.assertEqual({k: v.get() for k, v in self.vars.items()},
+                         {'experimental': False, 'helixsr_dir': '', 'upscaler': 'fsr3'})
+        self.assertFalse(self.window.installing_helixsr)
+        self.assertIn('HTTP 404', self.window.messagebox.showerror.call_args[0][1])
+        self.window.apply_upscaler_support.assert_not_called()
+
+    def test_the_button_reads_reinstall_once_a_built_copy_exists(self):
+        self.window.helixsr_button = mock.MagicMock()
+        launcher.Launcher.refresh_helixsr_install(self.window)
+        self.assertEqual(self.window.helixsr_button.configure.call_args.kwargs['text'], 'Install HelixSR')
+        install(self.port / 'helixsr')
+        launcher.Launcher.refresh_helixsr_install(self.window)
+        self.assertEqual(self.window.helixsr_button.configure.call_args.kwargs['text'], 'Reinstall HelixSR')
+        self.window.installing_helixsr = True
+        launcher.Launcher.refresh_helixsr_install(self.window)
+        self.assertEqual(self.window.helixsr_button.configure.call_args.kwargs['state'], 'disabled')
 
 
 if __name__ == '__main__':

@@ -43,6 +43,11 @@ try:
     FETCH_FSR4VK_ERROR = ''
 except Exception as _error:  # a missing or broken helper turns off the FSR 4.1.1 download only
     fetch_fsr4vk, FETCH_FSR4VK_ERROR = None, f'{type(_error).__name__}: {_error}'
+try:
+    import fetch_helixsr  # noqa: E402
+    FETCH_HELIXSR_ERROR = ''
+except Exception as _error:  # a missing or broken helper turns off the HelixSR install button only
+    fetch_helixsr, FETCH_HELIXSR_ERROR = None, f'{type(_error).__name__}: {_error}'
 DATA_DIR = Path(os.environ.get('BB_DATA_DIR', PORT_DIR))
 CONFIG_DIR = Path(os.environ.get('APPDATA', Path.home())) / 'bbport-launcher'
 CONFIG_FILE = CONFIG_DIR / 'settings.json'
@@ -490,6 +495,49 @@ def helixsr_folder(setting=''):
         return next((folder for folder in [root, *nested] if (folder / HELIXSR_DLL).is_file()), None)
     except OSError:
         return None
+
+
+HELIXSR_LICENSE_URL = 'https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt'
+
+
+def helixsr_consent_text():
+    """What the player agrees to before the one-click install runs HelixSR's setup with -Yes."""
+    return _("The launcher downloads HelixSR {} (about 57 MB) from github.com/lonewolf0622/HelixSR and runs its own "
+             "setup. The setup downloads NVIDIA's DLSS 310.7.0 DLL from NVIDIA's GitHub, under NVIDIA's license:\n{}\n\n"
+             "It then builds the network on this PC (about a minute; one-time downloads of about 150 MB into "
+             "%LOCALAPPDATA%\\HelixSR) and deletes the DLL. The network stays on this PC: do not share it.\n\n"
+             "Continue?",
+             "Лаунчер скачает HelixSR {} (около 57 МБ) с github.com/lonewolf0622/HelixSR и запустит его установку. "
+             "Она скачает DLL NVIDIA DLSS 310.7.0 с GitHub NVIDIA на условиях лицензии NVIDIA:\n{}\n\n"
+             "Затем сеть собирается на этом ПК (около минуты; единоразово скачивается около 150 МБ в "
+             "%LOCALAPPDATA%\\HelixSR), а DLL удаляется. Сеть остаётся на этом ПК: не передавайте её.\n\n"
+             "Продолжить?").format(fetch_helixsr.VERSION if fetch_helixsr else '', HELIXSR_LICENSE_URL)
+
+
+def helixsr_install_problem():
+    """Why the one-click install cannot run in this build ('' when it can): tools/fetch_helixsr.py did not import."""
+    return f'the install helper did not load ({FETCH_HELIXSR_ERROR})' if fetch_helixsr is None else ''
+
+
+def helixsr_built(folder):
+    """True when `folder` (helixsr_folder()'s answer) holds a built network: HelixSR's setup wrote helixsr_setup.json."""
+    return bool(folder) and (Path(folder) / HELIXSR_BUILT).is_file()
+
+
+def install_helixsr(consented, progress=None, on_line=None, force=False):
+    """The one-click install into <port>\\helixsr: download, verify, extract, then HelixSR's own setup. Runs nothing
+    unless `consented` (the player answered Yes to helixsr_consent_text()). Returns None when declined, '' when
+    the network is built, else the reason it failed. progress(done, total) covers the download, on_line(text) each
+    line the setup prints. Run it off the window's thread."""
+    if not consented:
+        return None
+    if helixsr_install_problem():
+        return helixsr_install_problem()
+    try:
+        fetch_helixsr.install(PORT_DIR / 'helixsr', progress, on_line, console_encoding(), NO_WINDOW, force)
+    except (fetch_helixsr.FetchError, OSError) as error:
+        return str(error)
+    return ''
 
 
 def fsr4vk_shown(*more):
@@ -2127,6 +2175,7 @@ class Launcher:
         self.reshade_started, self.reshade_refreshers = self.reshade_preset.get(), []
         self.process = self.job = None
         self.downloading = self.downloading_fsr4vk = self.fsr4vk_hashing = self.rechecking = False
+        self.installing_helixsr = False
         self.close_scheduled = False  # "Close the launcher when the game starts" is armed once per run
         self.installing, self.install_proc, self.install_cancel = False, None, threading.Event()
         self.install_card = self.install_hide = self.pkg_dialog = None
@@ -3420,13 +3469,16 @@ class Launcher:
         """The HelixSR folder under the Experimental switch: where the launcher found it, Browse to point it at
         another, and the download page. A change re-marks the upscaler dropdowns."""
         var = self.var('helixsr_dir', 'app')
-        holder = self.tk.Frame(parent, bg=CARD)
+        column = self.tk.Frame(parent, bg=CARD)
+        holder = self.tk.Frame(column, bg=CARD)
+        holder.pack(anchor='w')
         found = self.label(holder, '', wraplength=self.px(360), justify='left')
         found.pack(side='left')
 
         def show():
             folder = helixsr_folder(var.get())
             found.configure(text=str(folder) if folder else _('not found', 'не найдена'), fg=TEXT if folder else MUTED)
+            self.refresh_helixsr_install()
 
         def changed(*_args):
             show()
@@ -3440,12 +3492,22 @@ class Launcher:
         self.button(holder, _('Browse…', 'Обзор…'), browse).pack(side='left', padx=(self.px(12), 0))
         self.button(holder, _('Get HelixSR', 'Скачать HelixSR'), lambda: webbrowser.open(HELIXSR_URL)).pack(
             side='left', padx=(self.px(8), 0))
+        install = self.tk.Frame(column, bg=CARD)
+        install.pack(anchor='w', pady=(self.px(8), 0))
+        self.helixsr_button = self.button(install, '', self.start_helixsr_install, 'primary')
+        self.helixsr_button.pack(side='left')
+        self.helixsr_progress = Bar(self, install, 200)
+        self.helixsr_progress.pack(side='left', padx=self.px(12))
+        self.helixsr_info = self.label(column, '', 'small', MUTED, wraplength=self.px(420), justify='left')
+        self.helixsr_info.pack(anchor='w', pady=(self.px(4), 0))
         var.trace_add('write', changed)
         show()
-        self.row(parent, _('HelixSR folder', 'Папка HelixSR'), holder,
-                 _('Where its amd_fidelityfx_dx12.dll is; HelixSR is a separate download, set up once with its own '
-                   'helixsr-setup.bat.', 'Где лежит его amd_fidelityfx_dx12.dll. HelixSR скачивается отдельно и один '
-                   'раз настраивается своим helixsr-setup.bat.'))
+        self.row(parent, _('HelixSR folder', 'Папка HelixSR'), column,
+                 _('Install HelixSR sets it up in one step (the helixsr folder next to the launcher). Or download it '
+                   'yourself, run its helixsr-setup.bat once and pick the folder that holds its '
+                   'amd_fidelityfx_dx12.dll.',
+                   'Кнопка «Установить HelixSR» делает всё за один шаг (папка helixsr рядом с лаунчером). Или скачайте '
+                   'его сами, один раз запустите helixsr-setup.bat и выберите папку с его amd_fidelityfx_dx12.dll.'))
 
     def animations_changed(self):
         """The Animations switch: motion stops at once, or starts again."""
@@ -3717,6 +3779,87 @@ class Launcher:
                     self.messagebox.showerror('FSR 4.1.1', _('Download failed: {}', 'Не удалось скачать: {}').format(error))
             self.ui_calls.put(done)
         threading.Thread(target=work, daemon=True).start()
+
+    def refresh_helixsr_install(self):
+        """The button of the HelixSR folder row: Install, or Reinstall when a built HelixSR is found."""
+        if not hasattr(self, 'helixsr_button'):  # the Advanced page builds the row; a setting can change before it exists
+            return
+        problem = helixsr_install_problem()
+        again = helixsr_built(helixsr_folder(self.var('helixsr_dir', 'app').get()))
+        self.helixsr_button.configure(
+            text=_('Reinstall HelixSR', 'Переустановить HelixSR') if again else _('Install HelixSR', 'Установить HelixSR'),
+            state='disabled' if problem or self.installing_helixsr else 'normal')
+        if problem:
+            self.helixsr_info.configure(text=_('The install is not available in this build: {}',
+                                               'В этой сборке установка недоступна: {}').format(problem))
+
+    def start_helixsr_install(self):
+        """Asks the player (NVIDIA's DLL, its license), then downloads and builds HelixSR in the background."""
+        if self.installing_helixsr:
+            return
+        if self.process:  # a reinstall replaces the DLL the running game has loaded
+            self.messagebox.showinfo('HelixSR', _('Close the game before installing.', 'Закройте игру перед установкой.'))
+            return
+        if not self.messagebox.askyesno('HelixSR', helixsr_consent_text()):
+            return
+        force = helixsr_built(helixsr_folder(self.var('helixsr_dir', 'app').get()))
+        self.installing_helixsr = True
+        self.helixsr_progress.set(0.0)
+        self.helixsr_info.configure(text=_('Downloading HelixSR…', 'Скачивание HelixSR…'))
+        self.refresh_helixsr_install()
+
+        def progress(done, total):
+            if total > 0:  # the download is the first half of the bar; the build has no length to show
+                self.ui_calls.put(lambda: self.helixsr_progress.set(done / total * 0.5))
+
+        def on_line(line):
+            def show():
+                self.helixsr_progress.set(0.6)
+                self.helixsr_info.configure(text=line)
+                self.append(f'[HelixSR] {line}\n')
+            self.ui_calls.put(show)
+
+        def work():
+            try:
+                error = install_helixsr(True, progress, on_line, force)
+            except Exception as failure:  # nothing may end this thread before the result is queued
+                error = f'{type(failure).__name__}: {failure}'
+            self.ui_calls.put(lambda: self.helixsr_install_done(error))
+        threading.Thread(target=work, daemon=True).start()
+
+    def helixsr_install_done(self, error):
+        """The install ended. On failure the reason is shown and no setting moves. On success Experimental
+        features goes on if it was off, the folder setting follows the new copy when it pointed nowhere useful,
+        and HelixSR (experimental) is picked unless this PC cannot run it (then the reason is said)."""
+        self.installing_helixsr = False
+        if error:
+            self.helixsr_progress.set(0.0)
+            self.refresh_helixsr_install()
+            text = _('Install failed: {}', 'Не удалось установить: {}').format(error)
+            self.helixsr_info.configure(text=text)
+            self.append(f'[HelixSR] {text}\n')
+            self.messagebox.showerror('HelixSR', text)
+            return
+        notes = [_('HelixSR is installed.', 'HelixSR установлен.')]
+        experimental, folder = self.var('experimental', 'app'), self.var('helixsr_dir', 'app')
+        if not experimental.get():
+            experimental.set(True)  # its trace re-marks the dropdowns
+            notes.append(_('Experimental features turned on.', 'Экспериментальные функции включены.'))
+        if not helixsr_built(helixsr_folder(folder.get())):
+            folder.set('')  # the chosen folder holds no built HelixSR: use the one just installed
+        state, reason = self.upscaler_states()['helixsr']
+        if state == 'no':
+            notes.append(_('It is not available on this PC: {}.', 'Он недоступен на этом ПК: {}.').format(reason_text(reason)))
+        else:
+            self.var('upscaler', 'ini').set('helixsr')
+            notes.append(_('Upscaler set to HelixSR (experimental).', 'Масштабирование: HelixSR (экспериментально).'))
+        self.helixsr_progress.set(1.0)
+        self.apply_upscaler_support()
+        self.refresh_helixsr_install()
+        text = ' '.join(notes)
+        self.helixsr_info.configure(text=text)
+        self.append(f'[HelixSR] {text}\n')
+        self.status.configure(text=text, fg=MUTED)
 
     def refresh_lists(self):
         if not hasattr(self, 'patches_frame'):
