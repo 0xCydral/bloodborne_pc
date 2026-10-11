@@ -14,7 +14,7 @@ source ./msys2-env.sh
 # A Windows Python (not MSYS2's) for PyInstaller.
 python=${WINPYTHON:-}
 if [[ -z $python ]]; then
-    for candidate in /c/Python3*/python.exe "${LOCALAPPDATA:-/c/Users/$USER/AppData/Local}"/Programs/Python/Python3*/python.exe; do
+    for candidate in /c/Python3*/python.exe "${LOCALAPPDATA:-/c/Users/$(id -un)/AppData/Local}"/Programs/Python/Python3*/python.exe; do
         [[ -x $candidate ]] && python=$candidate
     done
 fi
