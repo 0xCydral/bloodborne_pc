@@ -28,7 +28,7 @@ Written 2026-10-12, before C: was formatted. Covers this repo and the sibling re
 
 | Path | Size | Note |
 |---|---|---|
-| `C:\Games\CUSA03173` | 29,972 MB | Bloodborne game dump (CUSA03173, update 1.09). Outside Projects, so `backup.ps1` does not copy it. Copy it to D: by hand. |
+| `C:\Games\CUSA03173` | 29,972 MB | Bloodborne game dump (CUSA03173, update 1.09). Outside Projects, so `backup.ps1` does not copy it. Copied on 2026-10-12 to `D:\migration\Games\CUSA03173` (28,810 files, 31,428,130,448 bytes, identical counts to the source). |
 | `user/savedata` | 14.3 MB | Game saves. Inside the repo, gitignored, copied by `backup.ps1`. |
 | `gpu/third_party/fsr-vulkan` local edits | 3 files | Uncommitted edits from 2026-10-08 in the submodule (`ffx_vk_fsr4_v07.*`, `ffx_vk.cpp`). Not mine; only the D: copy keeps them. |
 
