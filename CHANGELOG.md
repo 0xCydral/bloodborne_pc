@@ -4,6 +4,16 @@ All notable changes to the Windows fork of the Bloodborne PS4 port. The format f
 
 The release pages for 1.6 to 1.6.15 were deleted on 2026-10-09. The git tags remain, and this file replaces their notes. Version 1.6.9 is folded into 1.6.10 (see there).
 
+## [1.8.0-beta.2] - 2026-10-13
+
+### Changed
+
+- **Install HelixSR** now installs [HelixSR 1.9.0](https://github.com/lonewolf0622/HelixSR/releases/tag/v1.9.0): sharper images, an experimental int8 network that HelixSR turns on by itself on AMD RDNA 2 and newer, and experimental support for Radeon Vega. Press **Reinstall HelixSR** in Advanced to update; the launcher then uses the newest `HelixSR-*` folder. HelixSR 1.9.0 is under the HelixSR Freeware License, which allows this download of the official, unmodified release. Not tested in the game on an AMD card yet.
+
+### Fixed
+
+- After the in-game menu or the name entry closed, every gamepad button stayed ignored until all of them were released, so a button pressed right after closing did nothing. Only the buttons still held from the menu are ignored now.
+
 ## [1.8.0-beta.1] - 2026-10-11
 
 ### Added
