@@ -26,11 +26,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      # C:\msys64, where msys2-env.sh and build_dlss.sh look for CLANG64.
+      # The runner's preinstalled MSYS2 in C:\msys64, where msys2-env.sh and build_dlss.sh look for CLANG64.
       - uses: msys2/setup-msys2@v2
         with:
           msystem: CLANG64
-          location: C:\
+          release: false
           update: true
           path-type: inherit
           install: git patch unzip curl
