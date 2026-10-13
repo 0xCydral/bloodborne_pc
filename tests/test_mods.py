@@ -20,7 +20,7 @@ class ModTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()  # canonical: an 8.3 TEMP (RUNNER~1) would not compare equal
         self.game = self.root / 'CUSA03173'
         self.assets = self.game / 'dvdroot_ps4' / 'chr'
         self.assets.mkdir(parents=True)
@@ -172,7 +172,7 @@ class WindowsLinkTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()  # canonical: an 8.3 TEMP (RUNNER~1) would not compare equal
         self.game = self.root / 'CUSA03173'
         for folder in ('chr', 'map'):
             (self.game / 'dvdroot_ps4' / folder).mkdir(parents=True)
@@ -352,7 +352,7 @@ class IconLayerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()  # canonical: an 8.3 TEMP (RUNNER~1) would not compare equal
         self.game = self.root / 'CUSA03173'
         (self.game / 'dvdroot_ps4/menu').mkdir(parents=True)
         (self.game / 'dvdroot_ps4/menu/common.tpf.dcx').write_bytes(b'game icons')
