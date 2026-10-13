@@ -88,14 +88,14 @@ set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/fsr-vulkan EXCLUDE_FROM_ALL)
 if (MINGW)
-    # The SDK sources use _countof (mingw-w64 <stdlib.h>) and swprintf_s (<wchar.h>) without including
-    # them; newer libc++ no longer pulls those headers in through others. Its portability header only
-    # covers non-Windows hosts.
+    # The SDK sources use _countof, swprintf_s, log2 and placement new without including their headers;
+    # newer libc++ no longer pulls those in through others. Its portability header only covers non-Windows hosts.
     get_property(ffx_targets DIRECTORY third_party/fsr-vulkan PROPERTY BUILDSYSTEM_TARGETS)
     foreach (ffx_target IN LISTS ffx_targets)
         get_target_property(ffx_type ${ffx_target} TYPE)
         if (NOT ffx_type STREQUAL "INTERFACE_LIBRARY")
-            target_compile_options(${ffx_target} PRIVATE "SHELL:-include stdlib.h" "SHELL:-include wchar.h")
+            target_compile_options(${ffx_target} PRIVATE
+                "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/shim/ffx_mingw_includes.h")
         endif ()
     endforeach ()
 endif ()
