@@ -6,6 +6,7 @@ name: windows-package
 on:
   workflow_dispatch:
   push:
+    branches: [develop]   # workflow_dispatch only sees master, which moves only when a release ships
     tags: ['windows-v*']
 
 permissions:
