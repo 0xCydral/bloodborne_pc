@@ -829,11 +829,12 @@ static void touch_ids(PadData *d) {
     d->touch_held_time=d->touch_count ? (uint32_t)(d->timestamp-since) : 0;
 }
 /* After the menu or the text dialog closes, buttons still held (the Cross that accepted a
- * name) stay hidden until released: the game would take them as a new press. */
-static int hold_after_capture;
+ * name) stay hidden until released: the game would take them as a new press. Buttons pressed
+ * after that first read show at once. */
+static uint32_t hidden_after_capture;
 static void sample(PadData *d) {
     sample_host(d);
-    if (bbgpu_overlay_captures_input()) { hold_after_capture=1; return; }
+    if (bbgpu_overlay_captures_input()) { hidden_after_capture=UINT32_MAX; return; }
     record_sample(d);
     read_inject();
     replay_sample(d);
@@ -845,10 +846,8 @@ static void sample(PadData *d) {
     uint8_t *axes[4]={&d->left_x,&d->left_y,&d->right_x,&d->right_y};
     for (int i=0;i<4;++i) if (injected.stick[i]>=0) *axes[i]=(uint8_t)injected.stick[i];
     touch_ids(d);
-    if (hold_after_capture) {
-        if (d->buttons) d->buttons=0;
-        else hold_after_capture=0;
-    }
+    hidden_after_capture&=d->buttons;
+    d->buttons&=~hidden_after_capture;
 }
 
 static ABI int32_t pad_init(void) { pthread_mutex_lock(&lock); initialized=1; pthread_mutex_unlock(&lock); return 0; }
