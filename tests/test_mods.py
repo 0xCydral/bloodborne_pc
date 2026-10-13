@@ -379,7 +379,8 @@ class IconLayerTests(unittest.TestCase):
         self.assertEqual((result / self.COMMON).read_bytes(), b'generated icons')
         self.assertEqual((result / 'dvdroot_ps4/menu/other.dcx').read_bytes(), b'other')
         self.assertEqual((self.game / self.COMMON).read_bytes(), b'game icons')
-        self.assertFalse([p for p in [result, *result.rglob('*')] if p.is_symlink()])
+        if os.name == 'nt':  # only Windows forbids symlinks in the overlay (mods.py, upstream #102)
+            self.assertFalse([p for p in [result, *result.rglob('*')] if p.is_symlink()])
 
     def test_the_icons_go_under_the_mods_and_other_mods_still_apply(self):
         self.user_mod('Other', 'other.dcx')

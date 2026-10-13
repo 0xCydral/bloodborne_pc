@@ -25,7 +25,7 @@ import threading
 import urllib.error
 import urllib.request
 import zipfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fetch_fsr4vk import CHUNK, FetchError, sha256_of  # noqa: E402
@@ -104,7 +104,8 @@ def safe_members(archive: zipfile.ZipFile, target: Path):
     members = []
     for member in archive.infolist():
         destination = (root / member.filename).resolve()
-        if destination != root and root not in destination.parents:
+        # A drive or root (C:/x, /x) is refused on every host: on Linux it would land inside `target`.
+        if PureWindowsPath(member.filename).anchor or (destination != root and root not in destination.parents):
             raise FetchError(f'the zip holds a path outside the folder ({member.filename}); nothing was extracted')
         members.append((member, destination))
     return members
