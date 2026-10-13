@@ -18,7 +18,7 @@
 #ifdef _WIN32
 // This is the maximum number of UTF-16 code units permissible in Windows file paths
 #define MAX_PATH 260
-#include <Shlobj.h>
+#include <shlobj.h>
 #include <windows.h>
 #else
 // This is the maximum number of UTF-8 code units permissible in all other OSes' file paths

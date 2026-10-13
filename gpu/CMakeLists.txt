@@ -11,8 +11,9 @@ endif()
 # Frame pointers keep the loader's thread dumps (watchdog, SIGUSR2 sampling) walkable.
 add_compile_options(-fno-omit-frame-pointer)
 if (MINGW)
-    # Third-party code relies on transitive C library includes that newer libc++ dropped.
-    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/shim/mingw_std_includes.h>")
+    # Third-party C++ relies on transitive C library includes that newer libc++ dropped. C++ only: a C file
+    # may define a feature macro (_CRT_RAND_S in runtime.c) before its own <stdlib.h>.
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/shim/mingw_std_includes.h>")
 endif ()
 
 # bbport: link-time optimization (BB_LTO, default on) and profile-guided optimization
