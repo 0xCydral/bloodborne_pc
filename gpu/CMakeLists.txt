@@ -87,6 +87,17 @@ add_subdirectory(third_party/sirit EXCLUDE_FROM_ALL)
 set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/fsr-vulkan EXCLUDE_FROM_ALL)
+if (MINGW)
+    # The SDK sources use _countof and swprintf_s, which newer mingw-w64 headers hide under its strict
+    # -std=c++NN (__STRICT_ANSI__); its portability header only covers non-Windows hosts.
+    get_property(ffx_targets DIRECTORY third_party/fsr-vulkan PROPERTY BUILDSYSTEM_TARGETS)
+    foreach (ffx_target IN LISTS ffx_targets)
+        get_target_property(ffx_type ${ffx_target} TYPE)
+        if (NOT ffx_type STREQUAL "INTERFACE_LIBRARY")
+            set_target_properties(${ffx_target} PROPERTIES CXX_EXTENSIONS ON)
+        endif ()
+    endforeach ()
+endif ()
 
 # Host shaders -> headers (same scheme as shadPS4's host_shaders/CMakeLists.txt).
 set(SHADER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/shadps4/video_core/host_shaders)
