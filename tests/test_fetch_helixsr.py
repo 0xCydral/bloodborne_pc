@@ -78,9 +78,9 @@ class Base(unittest.TestCase):
 
 class FetchTests(Base):
     def test_the_pins_are_the_verified_release(self):
-        self.assertEqual(fetch.ZIP_URL, "https://github.com/lonewolf0622/HelixSR/releases/download/v1.8.1/HelixSR-1.8.1.zip")
-        self.assertEqual(fetch.ZIP_SIZE, 56650779)
-        self.assertEqual(fetch.ZIP_SHA256, "5b2d06db22d59aaa8c931fc06d3a8e354e65dde1bef9fce90086542f02d4a627")
+        self.assertEqual(fetch.ZIP_URL, "https://github.com/lonewolf0622/HelixSR/releases/download/v1.9.0/HelixSR-1.9.0.2.zip")
+        self.assertEqual(fetch.ZIP_SIZE, 56161772)
+        self.assertEqual(fetch.ZIP_SHA256, "190bc0a62e467b362eeb47d37e14571e51e5b7d75dca5a70e6eafba9b6797337")
 
     def test_extraction_layout(self):
         body = make_zip(MEMBERS)

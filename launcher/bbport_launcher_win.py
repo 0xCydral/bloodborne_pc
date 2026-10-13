@@ -487,7 +487,7 @@ def helixsr_release_order(folder):
 def helixsr_folder(setting=''):
     """The folder that holds HelixSR's DLL, or None. A chosen folder is the only place looked in (a wrong one is
     'not installed', never replaced by another copy); with none chosen it is <port>\\helixsr. Either may be that
-    folder itself or the parent of HelixSR-* folders (the release zip extracts to HelixSR-1.8.1): the newest
+    folder itself or the parent of HelixSR-* folders (the release zip extracts to HelixSR-1.9.0): the newest
     version wins. No fixed place outside the port: any user can create a folder at a drive's root."""
     root = Path(setting.strip()) if setting and setting.strip() else PORT_DIR / 'helixsr'
     try:

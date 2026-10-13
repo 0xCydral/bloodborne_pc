@@ -6,7 +6,7 @@
 
 HelixSR (https://github.com/lonewolf0622/HelixSR, a closed, free program that runs NVIDIA's DLSS network as
 Direct3D 12 compute shaders) is not part of the port. This script does what a player did by hand: fetches the
-pinned release zip, checks its SHA-256, extracts it (the zip holds a HelixSR-1.8.1 folder) and runs HelixSR's own,
+pinned release zip, checks its SHA-256, extracts it (the zip holds a HelixSR-1.9.0 folder) and runs HelixSR's own,
 unmodified `helixsr-setup.ps1 -Yes` in it, with stdin closed so the per-game installer skips every game. `-Yes`
 accepts the download of NVIDIA's DLSS DLL under NVIDIA's license, which the setup then deletes; the network it
 builds stays on this PC. Because of that, the command line refuses to build without --yes, and the launcher asks
@@ -30,14 +30,13 @@ from pathlib import Path, PureWindowsPath
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fetch_fsr4vk import CHUNK, FetchError, sha256_of  # noqa: E402
 
-VERSION = '1.8.1'
-ZIP_NAME = f'HelixSR-{VERSION}.zip'
+VERSION = '1.9.0'
+ZIP_NAME = 'HelixSR-1.9.0.2.zip'  # the asset carries a build number the tag and folder do not
 ZIP_URL = f'https://github.com/lonewolf0622/HelixSR/releases/download/v{VERSION}/{ZIP_NAME}'
-# The v1.8.1 asset was uploaded again on 2026-10-11 (16:49 UTC: new dlss-loader\dxgi.dll and setup\helixsr_install.py,
-# the same DLL and helixsr-setup.ps1); these are the values GitHub publishes for it now. A later re-upload makes the
-# check fail with "does not match the pinned SHA-256" until the pins are updated.
-ZIP_SIZE = 56650779
-ZIP_SHA256 = '5b2d06db22d59aaa8c931fc06d3a8e354e65dde1bef9fce90086542f02d4a627'
+# The values GitHub publishes for the v1.9.0 asset (released 2026-10-13). A later re-upload makes the check fail
+# with "does not match the pinned SHA-256" until the pins are updated.
+ZIP_SIZE = 56161772
+ZIP_SHA256 = '190bc0a62e467b362eeb47d37e14571e51e5b7d75dca5a70e6eafba9b6797337'
 TOP = f'HelixSR-{VERSION}'  # the folder the zip extracts to
 DLL = 'amd_fidelityfx_dx12.dll'
 BUILT = 'helixsr_setup.json'  # written beside the DLL when the setup built the network
