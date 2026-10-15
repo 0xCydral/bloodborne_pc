@@ -14,7 +14,7 @@ The release pages for 1.6 to 1.6.15 were deleted on 2026-10-09. The git tags rem
 ### Changed
 
 - The HelixSR setup's output is kept in `helixsr\helixsr-setup.log`, so a failed install stays readable after the launcher closes; attach it to a bug report when installing HelixSR fails.
-- **Install HelixSR** now says what HelixSR 1.9.0's setup does: the release is about 4 MB, and the setup downloads NVIDIA's DLSS 310.7.0 DLL, about 400 MB more of NVIDIA's files for HelixSR's frame generation, and about 70 MB of tools into `%LOCALAPPDATA%\HelixSR`.
+- **Install HelixSR** runs HelixSR's setup with `-NoFg`: this port uses HelixSR as an upscaler only, so HelixSR's frame generation — and its about 400 MB of NVIDIA downloads — is neither built nor fetched. The consent text now names only what remains: the about 4 MB release, NVIDIA's DLSS 310.7.0 DLL, and about 70 MB of tools.
 
 ## [1.8.0-beta.2] - 2026-10-13
 

@@ -501,21 +501,16 @@ HELIXSR_LICENSE_URL = 'https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt'
 
 
 def helixsr_consent_text():
-    """What the player agrees to before the one-click install runs HelixSR's setup with -Yes."""
+    """What the player agrees to before the one-click install runs HelixSR's setup with -Yes -NoFg."""
     return _("The launcher downloads HelixSR {} (about 4 MB) from github.com/lonewolf0622/HelixSR and runs its own "
-             "setup. The setup downloads NVIDIA's DLSS 310.7.0 DLL from NVIDIA's GitHub and, for HelixSR's frame "
-             "generation, about 400 MB more of NVIDIA's files (its DLSS Frame Generation DLL and NGX core), under "
-             "NVIDIA's license:\n{}\n\n"
-             "It then builds HelixSR's network and frame generation on this PC (several minutes; one-time downloads "
-             "of about 70 MB of tools into %LOCALAPPDATA%\\HelixSR) and deletes the downloaded DLLs. What it builds "
-             "stays on this PC: do not share it.\n\n"
+             "setup. The setup downloads NVIDIA's DLSS 310.7.0 DLL from NVIDIA's GitHub, under NVIDIA's license:\n{}\n\n"
+             "It then builds the network on this PC (a few minutes; one-time downloads of about 70 MB of tools into "
+             "%LOCALAPPDATA%\\HelixSR) and deletes the DLL. The network stays on this PC: do not share it.\n\n"
              "Continue?",
              "Лаунчер скачает HelixSR {} (около 4 МБ) с github.com/lonewolf0622/HelixSR и запустит его установку. "
-             "Она скачает DLL NVIDIA DLSS 310.7.0 с GitHub NVIDIA и, для генерации кадров HelixSR, ещё около 400 МБ "
-             "файлов NVIDIA (DLL DLSS Frame Generation и ядро NGX) на условиях лицензии NVIDIA:\n{}\n\n"
-             "Затем сеть HelixSR и генерация кадров собираются на этом ПК (несколько минут; единоразово скачивается "
-             "около 70 МБ инструментов в %LOCALAPPDATA%\\HelixSR), а скачанные DLL удаляются. Собранное остаётся на "
-             "этом ПК: не передавайте его.\n\n"
+             "Она скачает DLL NVIDIA DLSS 310.7.0 с GitHub NVIDIA на условиях лицензии NVIDIA:\n{}\n\n"
+             "Затем сеть собирается на этом ПК (несколько минут; единоразово скачивается около 70 МБ инструментов "
+             "в %LOCALAPPDATA%\\HelixSR), а DLL удаляется. Сеть остаётся на этом ПК: не передавайте её.\n\n"
              "Продолжить?").format(fetch_helixsr.VERSION if fetch_helixsr else '', HELIXSR_LICENSE_URL)
 
 

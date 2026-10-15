@@ -182,9 +182,10 @@ class BuildTests(Base):
             return FakeProcess(output, code)
         return start
 
-    def test_the_command_line_is_the_unmodified_setup_with_yes(self):
+    def test_the_command_line_is_the_setup_with_yes_and_no_frame_generation(self):
+        # -NoFg is what keeps the about 400 MB of NVIDIA downloads for HelixSR's frame generation away
         self.assertEqual(fetch.setup_command(), ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                                                 "helixsr-setup.ps1", "-Yes"])
+                                                 "helixsr-setup.ps1", "-Yes", "-NoFg"])
 
     def test_it_runs_in_the_folder_with_stdin_closed_and_no_window(self):
         with mock.patch.object(fetch.subprocess, "Popen",

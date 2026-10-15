@@ -377,9 +377,10 @@ class InstallFunctionTests(unittest.TestCase):
         for language in ('en', 'ru'):
             with mock.patch.object(launcher, 'LANG', language):
                 text = launcher.helixsr_consent_text()
-            for part in ('https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt', '310.7.0', '400', '70',
+            for part in ('https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt', '310.7.0', '70',
                          '%LOCALAPPDATA%\\HelixSR'):
                 self.assertIn(part, text)
+            self.assertNotIn('400', text)  # -NoFg: nothing downloads NVIDIA's files for frame generation
         self.assertRegex(text, '[а-я]')  # the last one was Russian
 
 

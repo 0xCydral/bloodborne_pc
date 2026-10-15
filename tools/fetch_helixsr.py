@@ -6,14 +6,15 @@
 
 HelixSR (https://github.com/lonewolf0622/HelixSR, a closed, free program that runs NVIDIA's DLSS network as
 Direct3D 12 compute shaders) is not part of the port. This script does what a player did by hand: fetches the
-pinned release zip, checks its SHA-256, extracts it (the zip holds a HelixSR-1.9.0 folder) and runs HelixSR's own,
-unmodified `helixsr-setup.ps1 -Yes` in it, with stdin closed so the per-game installer skips every game. `-Yes`
-accepts the setup's downloads of NVIDIA's DLSS DLL and of the files its frame generation is built from, under
-NVIDIA's license; the setup then deletes the downloaded DLLs, and what it builds stays on this PC. Because of
-that, the command line refuses to build without --yes, and the launcher asks first. Download is resumable (HTTP
-Range into a .part file) and reuses fetch_fsr4vk's FetchError and hashing. Which pinned zip the extracted files
-came from is recorded beside the folder (PACKAGE; `package_current`), the setup's whole output is kept as
-SETUP_LOG, and `install` writes both so a build from another zip and a failed build stay visible after the run.
+pinned release zip, checks its SHA-256, extracts it (the zip holds a HelixSR-1.9.0 folder) and runs HelixSR's own
+`helixsr-setup.ps1 -Yes -NoFg` in it, with stdin closed so the per-game installer skips every game. `-Yes`
+accepts the download of NVIDIA's DLSS DLL under NVIDIA's license, which the setup then deletes; `-NoFg` skips
+HelixSR's frame generation (the port uses HelixSR as an upscaler only), whose build downloads about 400 MB more
+of NVIDIA's files. What the setup builds stays on this PC. Because of that, the command line refuses to build
+without --yes, and the launcher asks first. Download is resumable (HTTP Range into a .part file) and reuses
+fetch_fsr4vk's FetchError and hashing. Which pinned zip the extracted files came from is recorded beside the
+folder (PACKAGE; `package_current`), the setup's whole output is kept as SETUP_LOG, and `install` writes both so
+a build from another zip and a failed build stay visible after the run.
 
 DIR defaults to the helixsr folder of the port, where the launcher looks (helixsr_folder()).
 Exit status 0: the network is built (helixsr_setup.json sits beside amd_fidelityfx_dx12.dll). 1: failed (the
@@ -192,8 +193,11 @@ def fetch(target: Path, progress=None) -> Path:
 
 
 def setup_command() -> list:
-    """HelixSR's own setup, unmodified; run with the HelixSR folder as the working directory."""
-    return ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SETUP, '-Yes']
+    """HelixSR's own setup, run with the HelixSR folder as the working directory. `-NoFg` skips its frame
+    generation: that build is the only thing that downloads NVIDIA's Streamline DLL and NGX core (about 400 MB
+    from NVIDIA), and the port uses HelixSR as an upscaler only. The setup treats the frame generation as done
+    then (its -NoFg switch maps to `--no-fg`, which makes helixsr_setup.py's build_fg() return at once)."""
+    return ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SETUP, '-Yes', '-NoFg']
 
 
 class SetupLog:
