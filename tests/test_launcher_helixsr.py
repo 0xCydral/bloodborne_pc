@@ -111,6 +111,52 @@ class FolderTests(unittest.TestCase):
 
 
 @unittest.skipUnless(sys.platform == 'win32', 'the Windows launcher')
+class OutdatedTests(unittest.TestCase):
+    """helixsr_outdated: a copy the launcher itself set up from another zip (or an older release) is offered as
+    Update; a newer copy, and any folder the player chose, are left alone."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.port = Path(self.tmp.name) / 'port'
+        patcher = mock.patch.object(launcher, 'PORT_DIR', self.port)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.root = self.port / 'helixsr'
+
+    def test_the_pinned_copy_is_current(self):
+        folder = install(self.root / 'HelixSR-1.9.0')
+        launcher.fetch_helixsr.write_package_record(self.root)
+        self.assertTrue(launcher.fetch_helixsr.package_current(self.root))
+        self.assertFalse(launcher.helixsr_outdated(folder))
+
+    def test_a_copy_from_another_zip_is_outdated(self):
+        folder = install(self.root / 'HelixSR-1.9.0')  # the same version name as the pinned release
+        self.assertTrue(launcher.helixsr_outdated(folder))
+
+    def test_an_older_release_is_outdated(self):
+        folder = install(self.root / 'HelixSR-1.8.1')
+        launcher.fetch_helixsr.write_package_record(self.root)  # even a current record does not cover it
+        self.assertTrue(launcher.helixsr_outdated(folder))
+
+    def test_a_newer_release_is_left_alone(self):
+        folder = install(self.root / 'HelixSR-1.10.0')
+        self.assertFalse(launcher.helixsr_outdated(folder))
+
+    def test_a_folder_the_player_chose_is_left_alone(self):
+        folder = install(self.root / 'HelixSR-1.9.0')
+        self.assertFalse(launcher.helixsr_outdated(folder, str(folder)))
+
+    def test_a_folder_outside_the_launcher_folder_is_left_alone(self):
+        self.assertFalse(launcher.helixsr_outdated(install(Path(self.tmp.name) / 'mine')))
+
+    def test_without_the_helper_nothing_is_outdated(self):
+        folder = install(self.root / 'HelixSR-1.9.0')
+        with mock.patch.object(launcher, 'fetch_helixsr', None):
+            self.assertFalse(launcher.helixsr_outdated(folder))
+
+
+@unittest.skipUnless(sys.platform == 'win32', 'the Windows launcher')
 class StateTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -331,7 +377,8 @@ class InstallFunctionTests(unittest.TestCase):
         for language in ('en', 'ru'):
             with mock.patch.object(launcher, 'LANG', language):
                 text = launcher.helixsr_consent_text()
-            for part in ('https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt', '310.7.0', '150', '%LOCALAPPDATA%\\HelixSR'):
+            for part in ('https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt', '310.7.0', '400', '70',
+                         '%LOCALAPPDATA%\\HelixSR'):
                 self.assertIn(part, text)
         self.assertRegex(text, '[а-я]')  # the last one was Russian
 
@@ -451,6 +498,24 @@ class InstallButtonTests(unittest.TestCase):
         self.window.installing_helixsr = True
         launcher.Launcher.refresh_helixsr_install(self.window)
         self.assertEqual(self.window.helixsr_button.configure.call_args.kwargs['state'], 'disabled')
+
+    def test_the_button_reads_update_for_a_copy_from_another_zip(self):
+        self.window.helixsr_button = mock.MagicMock()
+        install(self.port / 'helixsr' / 'HelixSR-1.9.0')
+        launcher.Launcher.refresh_helixsr_install(self.window)
+        self.assertEqual(self.window.helixsr_button.configure.call_args.kwargs['text'], 'Update HelixSR')
+        self.assertIn('Update HelixSR', self.window.helixsr_info.configure.call_args.kwargs['text'])
+        launcher.fetch_helixsr.write_package_record(self.port / 'helixsr')  # the pinned zip's own record
+        launcher.Launcher.refresh_helixsr_install(self.window)
+        self.assertEqual(self.window.helixsr_button.configure.call_args.kwargs['text'], 'Reinstall HelixSR')
+
+    def test_an_outdated_copy_is_refetched_not_built_in_place(self):
+        folder = self.port / 'helixsr' / 'HelixSR-1.9.0'
+        folder.mkdir(parents=True)
+        (folder / 'amd_fidelityfx_dx12.dll').write_bytes(b'MZ')
+        (folder / 'helixsr-setup.ps1').write_text('#', encoding='utf-8')  # extracted, but never built
+        run = self.start(built=False)
+        self.assertTrue(run.call_args[0][3])  # force: the files did not come from the pinned zip
 
 
 if __name__ == '__main__':

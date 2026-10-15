@@ -502,15 +502,20 @@ HELIXSR_LICENSE_URL = 'https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt'
 
 def helixsr_consent_text():
     """What the player agrees to before the one-click install runs HelixSR's setup with -Yes."""
-    return _("The launcher downloads HelixSR {} (about 57 MB) from github.com/lonewolf0622/HelixSR and runs its own "
-             "setup. The setup downloads NVIDIA's DLSS 310.7.0 DLL from NVIDIA's GitHub, under NVIDIA's license:\n{}\n\n"
-             "It then builds the network on this PC (about a minute; one-time downloads of about 150 MB into "
-             "%LOCALAPPDATA%\\HelixSR) and deletes the DLL. The network stays on this PC: do not share it.\n\n"
+    return _("The launcher downloads HelixSR {} (about 4 MB) from github.com/lonewolf0622/HelixSR and runs its own "
+             "setup. The setup downloads NVIDIA's DLSS 310.7.0 DLL from NVIDIA's GitHub and, for HelixSR's frame "
+             "generation, about 400 MB more of NVIDIA's files (its DLSS Frame Generation DLL and NGX core), under "
+             "NVIDIA's license:\n{}\n\n"
+             "It then builds HelixSR's network and frame generation on this PC (several minutes; one-time downloads "
+             "of about 70 MB of tools into %LOCALAPPDATA%\\HelixSR) and deletes the downloaded DLLs. What it builds "
+             "stays on this PC: do not share it.\n\n"
              "Continue?",
-             "Лаунчер скачает HelixSR {} (около 57 МБ) с github.com/lonewolf0622/HelixSR и запустит его установку. "
-             "Она скачает DLL NVIDIA DLSS 310.7.0 с GitHub NVIDIA на условиях лицензии NVIDIA:\n{}\n\n"
-             "Затем сеть собирается на этом ПК (около минуты; единоразово скачивается около 150 МБ в "
-             "%LOCALAPPDATA%\\HelixSR), а DLL удаляется. Сеть остаётся на этом ПК: не передавайте её.\n\n"
+             "Лаунчер скачает HelixSR {} (около 4 МБ) с github.com/lonewolf0622/HelixSR и запустит его установку. "
+             "Она скачает DLL NVIDIA DLSS 310.7.0 с GitHub NVIDIA и, для генерации кадров HelixSR, ещё около 400 МБ "
+             "файлов NVIDIA (DLL DLSS Frame Generation и ядро NGX) на условиях лицензии NVIDIA:\n{}\n\n"
+             "Затем сеть HelixSR и генерация кадров собираются на этом ПК (несколько минут; единоразово скачивается "
+             "около 70 МБ инструментов в %LOCALAPPDATA%\\HelixSR), а скачанные DLL удаляются. Собранное остаётся на "
+             "этом ПК: не передавайте его.\n\n"
              "Продолжить?").format(fetch_helixsr.VERSION if fetch_helixsr else '', HELIXSR_LICENSE_URL)
 
 
@@ -522,6 +527,22 @@ def helixsr_install_problem():
 def helixsr_built(folder):
     """True when `folder` (helixsr_folder()'s answer) holds a built network: HelixSR's setup wrote helixsr_setup.json."""
     return bool(folder) and (Path(folder) / HELIXSR_BUILT).is_file()
+
+
+def helixsr_outdated(found, setting=''):
+    """True when the HelixSR the launcher itself set up is not the pinned release: its version is older than
+    HelixSR {VERSION}, or its files did not come from the pinned zip (no `helixsr-package.json` next to them,
+    which `fetch_helixsr.fetch` writes). A copy newer than the pinned one, and any folder the player chose
+    (a wrong choice is theirs to fix), are left alone. The launcher's own folder is <port>\\helixsr."""
+    if not found or setting.strip() or fetch_helixsr is None:
+        return False
+    root = PORT_DIR / 'helixsr'
+    if found.parent != root:
+        return False
+    pinned, order = helixsr_release_order(Path(fetch_helixsr.TOP)), helixsr_release_order(found)
+    if order > pinned:
+        return False  # newer than the pinned release: the player's copy to keep
+    return order < pinned or not fetch_helixsr.package_current(root)
 
 
 def install_helixsr(consented, progress=None, on_line=None, force=False):
@@ -3781,17 +3802,27 @@ class Launcher:
         threading.Thread(target=work, daemon=True).start()
 
     def refresh_helixsr_install(self):
-        """The button of the HelixSR folder row: Install, or Reinstall when a built HelixSR is found."""
+        """The button of the HelixSR folder row: Install; Update when the copy the launcher itself set up is not
+        the pinned release (an older version, or one built from another zip); Reinstall once a built copy is found."""
         if not hasattr(self, 'helixsr_button'):  # the Advanced page builds the row; a setting can change before it exists
             return
         problem = helixsr_install_problem()
-        again = helixsr_built(helixsr_folder(self.var('helixsr_dir', 'app').get()))
-        self.helixsr_button.configure(
-            text=_('Reinstall HelixSR', 'Переустановить HelixSR') if again else _('Install HelixSR', 'Установить HelixSR'),
-            state='disabled' if problem or self.installing_helixsr else 'normal')
+        setting = self.var('helixsr_dir', 'app').get()
+        folder = helixsr_folder(setting)
+        outdated = helixsr_outdated(folder, setting)
+        if outdated:
+            text = _('Update HelixSR', 'Обновить HelixSR')
+        elif helixsr_built(folder):
+            text = _('Reinstall HelixSR', 'Переустановить HelixSR')
+        else:
+            text = _('Install HelixSR', 'Установить HelixSR')
+        self.helixsr_button.configure(text=text, state='disabled' if problem or self.installing_helixsr else 'normal')
         if problem:
             self.helixsr_info.configure(text=_('The install is not available in this build: {}',
                                                'В этой сборке установка недоступна: {}').format(problem))
+        elif outdated and not self.installing_helixsr:
+            self.helixsr_info.configure(text=_('A newer HelixSR release is available: press Update HelixSR.',
+                                               'Доступен новый выпуск HelixSR: нажмите «Обновить HelixSR».'))
 
     def start_helixsr_install(self):
         """Asks the player (NVIDIA's DLL, its license), then downloads and builds HelixSR in the background."""
@@ -3802,7 +3833,10 @@ class Launcher:
             return
         if not self.messagebox.askyesno('HelixSR', helixsr_consent_text()):
             return
-        force = helixsr_built(helixsr_folder(self.var('helixsr_dir', 'app').get()))
+        setting = self.var('helixsr_dir', 'app').get()
+        folder = helixsr_folder(setting)
+        # Reinstall and an update replace the folder with the pinned release; only a plain build keeps its files
+        force = helixsr_built(folder) or helixsr_outdated(folder, setting)
         self.installing_helixsr = True
         self.helixsr_progress.set(0.0)
         self.helixsr_info.configure(text=_('Downloading HelixSR…', 'Скачивание HelixSR…'))
@@ -3840,13 +3874,16 @@ class Launcher:
             self.append(f'[HelixSR] {text}\n')
             self.messagebox.showerror('HelixSR', text)
             return
-        notes = [_('HelixSR is installed.', 'HelixSR установлен.')]
         experimental, folder = self.var('experimental', 'app'), self.var('helixsr_dir', 'app')
+        installed = helixsr_folder(folder.get())
+        if not helixsr_built(installed):
+            folder.set('')  # the chosen folder holds no built HelixSR: use the one just installed
+            installed = helixsr_folder(folder.get())
+        notes = [_('HelixSR is installed in {}.', 'HelixSR установлен в {}.').format(short_path(installed))
+                 if installed else _('HelixSR is installed.', 'HelixSR установлен.')]
         if not experimental.get():
             experimental.set(True)  # its trace re-marks the dropdowns
             notes.append(_('Experimental features turned on.', 'Экспериментальные функции включены.'))
-        if not helixsr_built(helixsr_folder(folder.get())):
-            folder.set('')  # the chosen folder holds no built HelixSR: use the one just installed
         state, reason = self.upscaler_states()['helixsr']
         if state == 'no':
             notes.append(_('It is not available on this PC: {}.', 'Он недоступен на этом ПК: {}.').format(reason_text(reason)))

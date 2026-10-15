@@ -5,6 +5,7 @@ import contextlib
 import hashlib
 import importlib.util
 import io
+import json
 import subprocess
 import tempfile
 import threading
@@ -78,9 +79,9 @@ class Base(unittest.TestCase):
 
 class FetchTests(Base):
     def test_the_pins_are_the_verified_release(self):
-        self.assertEqual(fetch.ZIP_URL, "https://github.com/lonewolf0622/HelixSR/releases/download/v1.9.0/HelixSR-1.9.0.2.zip")
-        self.assertEqual(fetch.ZIP_SIZE, 56161772)
-        self.assertEqual(fetch.ZIP_SHA256, "190bc0a62e467b362eeb47d37e14571e51e5b7d75dca5a70e6eafba9b6797337")
+        self.assertEqual(fetch.ZIP_URL, "https://github.com/lonewolf0622/HelixSR/releases/download/v1.9.0/HelixSR-1.9.0.zip")
+        self.assertEqual(fetch.ZIP_SIZE, 3803249)
+        self.assertEqual(fetch.ZIP_SHA256, "795268f60a1262cd7c8cb01a38f553751cc380fa0cbec63c8f466b6807468be4")
 
     def test_extraction_layout(self):
         body = make_zip(MEMBERS)
@@ -128,6 +129,38 @@ class FetchTests(Base):
         self.assertTrue(fetch.extracted(self.target))
         self.assertIsNone(server.ranges[0])
         self.assertEqual(server.ranges[1], f"bytes={len(body) // 2}-")
+
+    def test_fetch_records_which_pinned_zip_the_files_came_from(self):
+        self.serve(make_zip(MEMBERS))
+        folder = fetch.fetch(self.target)
+        self.assertTrue(fetch.package_current(self.target))
+        record = json.loads((self.target / fetch.PACKAGE).read_text(encoding="utf-8"))
+        self.assertEqual(record["zip_sha256"], fetch.ZIP_SHA256)
+        self.assertEqual(record["zip_name"], fetch.ZIP_NAME)
+        self.assertEqual(record["folder"], folder.name)
+
+    def test_a_folder_without_the_record_or_from_another_zip_is_outdated(self):
+        self.assertFalse(fetch.package_current(self.target))  # nothing extracted yet
+        self.serve(make_zip(MEMBERS))
+        fetch.fetch(self.target)
+        for other in ("0" * 64, 1):  # another zip's hash; a record that is not even shaped right
+            (self.target / fetch.PACKAGE).write_text(json.dumps({"zip_sha256": other, "folder": fetch.TOP}),
+                                                     encoding="utf-8")
+            self.assertFalse(fetch.package_current(self.target))
+        (self.target / fetch.PACKAGE).write_text(json.dumps({"zip_sha256": fetch.ZIP_SHA256, "folder": "HelixSR-1.8.1"}),
+                                                 encoding="utf-8")
+        self.assertFalse(fetch.package_current(self.target))  # the files went to another release's folder
+        (self.target / fetch.PACKAGE).write_text("not json", encoding="utf-8")
+        self.assertFalse(fetch.package_current(self.target))
+
+    def test_a_refetch_drops_the_replaced_build_record_and_records_the_zip(self):
+        self.serve(make_zip(MEMBERS))
+        folder = fetch.fetch(self.target)
+        (folder / fetch.BUILT).write_text("{}", encoding="utf-8")  # a build of the replaced files
+        (self.target / fetch.PACKAGE).write_text("{}", encoding="utf-8")
+        fetch.fetch(self.target)
+        self.assertFalse((folder / fetch.BUILT).exists())
+        self.assertTrue(fetch.package_current(self.target))
 
 
 class BuildTests(Base):
@@ -182,12 +215,39 @@ class BuildTests(Base):
             with self.assertRaisesRegex(fetch.FetchError, "helixsr_setup.json is missing"):
                 fetch.build(self.folder)
 
-    def test_a_marker_of_an_earlier_build_does_not_count(self):
+    def test_a_record_the_setup_did_not_rewrite_is_kept(self):
+        # with the network built, 1.9.0's setup does not write helixsr_setup.json again; keeping the record is
+        # what lets a re-run (and the command line) pass instead of failing on a missing file
         self.writes_marker()
         with mock.patch.object(fetch.subprocess, "Popen", side_effect=self.runs()):
+            fetch.build(self.folder)
+        self.assertTrue(fetch.built(self.folder))
+
+    def test_the_setup_output_is_kept_in_the_log(self):
+        log = self.target / "helixsr-setup.log"
+        lines = []
+        with mock.patch.object(fetch.subprocess, "Popen", side_effect=self.runs(b"[helixsr-setup] one\nbuilding\r\n",
+                                                                               marker=True)):
+            fetch.build(self.folder, lines.append, log_path=log)
+        text = log.read_text(encoding="utf-8")
+        self.assertIn(f"HelixSR's setup: {' '.join(fetch.setup_command())}", text)
+        self.assertIn("[helixsr-setup] one", text)
+        self.assertIn("building", text)
+        self.assertEqual(lines, ["[helixsr-setup] one", "building"])  # the sink still gets every line
+
+    def test_a_failed_setup_keeps_its_output_in_the_log(self):
+        log = self.target / "helixsr-setup.log"
+        with mock.patch.object(fetch.subprocess, "Popen", side_effect=self.runs(b"error: checksum mismatch\n", 1)):
             with self.assertRaises(fetch.FetchError):
-                fetch.build(self.folder)
-        self.assertFalse((self.folder / fetch.BUILT).exists())
+                fetch.build(self.folder, log_path=log)
+        self.assertIn("checksum mismatch", log.read_text(encoding="utf-8"))
+
+    def test_a_log_that_cannot_be_written_never_stops_the_build(self):
+        log = self.target / "a-folder"  # opening a folder as a file fails; the build must run anyway
+        log.mkdir()
+        with mock.patch.object(fetch.subprocess, "Popen", side_effect=self.runs(marker=True)):
+            fetch.build(self.folder, log_path=log)
+        self.assertTrue(fetch.built(self.folder))
 
     def test_a_failing_setup_names_its_last_line(self):
         output = b"[helixsr-setup] downloading python.zip\n[helixsr-setup] error: checksum mismatch\n"
@@ -220,6 +280,15 @@ class InstallTests(Base):
                 mock.patch.object(fetch, "build", side_effect=lambda *a: order.append("build")):
             fetch.install(self.target)
         self.assertEqual(order, ["fetch", "build"])
+
+    def test_the_setup_log_lands_in_the_target(self):
+        folder = self.target / TOP
+        folder.mkdir(parents=True)
+        (folder / "amd_fidelityfx_dx12.dll").write_bytes(b"MZ")
+        (folder / "helixsr-setup.ps1").write_text("#", encoding="utf-8")
+        with mock.patch.object(fetch, "fetch"), mock.patch.object(fetch, "build") as run:
+            fetch.install(self.target)
+        self.assertEqual(run.call_args[0][4], self.target / "helixsr-setup.log")
 
     def test_the_command_line_runs_nothing_without_yes(self):
         err = io.StringIO()

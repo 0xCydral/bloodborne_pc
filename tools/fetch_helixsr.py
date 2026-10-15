@@ -8,9 +8,12 @@ HelixSR (https://github.com/lonewolf0622/HelixSR, a closed, free program that ru
 Direct3D 12 compute shaders) is not part of the port. This script does what a player did by hand: fetches the
 pinned release zip, checks its SHA-256, extracts it (the zip holds a HelixSR-1.9.0 folder) and runs HelixSR's own,
 unmodified `helixsr-setup.ps1 -Yes` in it, with stdin closed so the per-game installer skips every game. `-Yes`
-accepts the download of NVIDIA's DLSS DLL under NVIDIA's license, which the setup then deletes; the network it
-builds stays on this PC. Because of that, the command line refuses to build without --yes, and the launcher asks
-first. Download is resumable (HTTP Range into a .part file) and reuses fetch_fsr4vk's FetchError and hashing.
+accepts the setup's downloads of NVIDIA's DLSS DLL and of the files its frame generation is built from, under
+NVIDIA's license; the setup then deletes the downloaded DLLs, and what it builds stays on this PC. Because of
+that, the command line refuses to build without --yes, and the launcher asks first. Download is resumable (HTTP
+Range into a .part file) and reuses fetch_fsr4vk's FetchError and hashing. Which pinned zip the extracted files
+came from is recorded beside the folder (PACKAGE; `package_current`), the setup's whole output is kept as
+SETUP_LOG, and `install` writes both so a build from another zip and a failed build stay visible after the run.
 
 DIR defaults to the helixsr folder of the port, where the launcher looks (helixsr_folder()).
 Exit status 0: the network is built (helixsr_setup.json sits beside amd_fidelityfx_dx12.dll). 1: failed (the
@@ -18,10 +21,12 @@ reason is the last line on stderr).
 """
 import argparse
 import http.client
+import json
 import os
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -31,15 +36,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fetch_fsr4vk import CHUNK, FetchError, sha256_of  # noqa: E402
 
 VERSION = '1.9.0'
-ZIP_NAME = 'HelixSR-1.9.0.2.zip'  # the asset carries a build number the tag and folder do not
+ZIP_NAME = 'HelixSR-1.9.0.zip'
 ZIP_URL = f'https://github.com/lonewolf0622/HelixSR/releases/download/v{VERSION}/{ZIP_NAME}'
-# The values GitHub publishes for the v1.9.0 asset (released 2026-10-13). A later re-upload makes the check fail
-# with "does not match the pinned SHA-256" until the pins are updated.
-ZIP_SIZE = 56161772
-ZIP_SHA256 = '190bc0a62e467b362eeb47d37e14571e51e5b7d75dca5a70e6eafba9b6797337'
+# The values GitHub publishes for the v1.9.0 asset (re-uploaded 2026-10-15; the earlier HelixSR-1.9.0.2.zip was
+# removed). A later re-upload makes the check fail with "does not match the pinned SHA-256" until the pins update.
+ZIP_SIZE = 3803249
+ZIP_SHA256 = '795268f60a1262cd7c8cb01a38f553751cc380fa0cbec63c8f466b6807468be4'
 TOP = f'HelixSR-{VERSION}'  # the folder the zip extracts to
 DLL = 'amd_fidelityfx_dx12.dll'
 BUILT = 'helixsr_setup.json'  # written beside the DLL when the setup built the network
+PACKAGE = 'helixsr-package.json'  # beside the extracted folder: which pinned zip its files came from
+SETUP_LOG = 'helixsr-setup.log'  # the setup's output, kept beside the folder so a failed build stays readable
 SETUP = 'helixsr-setup.ps1'
 BUILD_TIMEOUT = 1800  # seconds; the build takes about a minute plus the first-time downloads
 PORT = Path(__file__).resolve().parent.parent
@@ -134,6 +141,33 @@ def extract(part: Path, target: Path) -> None:
         raise FetchError(f'the zip does not hold {TOP}\\{SETUP} and {TOP}\\{DLL}')
 
 
+def write_package_record(target: Path, folder: Path = None) -> None:
+    """Remembers which pinned zip was extracted into `target`: `package_current` trusts a folder only with this
+    record, so a copy built from another zip never passes for the pinned one. Written the moment the verified zip
+    is on disk."""
+    folder = Path(folder) if folder else install_folder(target)
+    (Path(target) / PACKAGE).write_text(json.dumps(
+        {'version': VERSION, 'zip_name': ZIP_NAME, 'zip_sha256': ZIP_SHA256, 'folder': folder.name},
+        indent=1) + '\n', encoding='utf-8')
+
+
+def package_current(target: Path) -> bool:
+    """True when the pinned zip's files were extracted into `target` (see write_package_record) and they went to
+    the pinned folder. A folder without that record, or one from another zip, counts as outdated."""
+    try:
+        record = json.loads((Path(target) / PACKAGE).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return False
+    return (isinstance(record, dict) and record.get('zip_sha256') == ZIP_SHA256
+            and record.get('folder') == TOP)
+
+
+def forget_build(folder: Path) -> None:
+    """Drops the build record of the files a fresh extraction just replaced, so a failure of the coming build
+    cannot let the replaced build pass for the new files. build() writes it again; the zip carries none."""
+    (Path(folder) / BUILT).unlink(missing_ok=True)
+
+
 def fetch(target: Path, progress=None) -> Path:
     """Downloads, verifies and extracts the pinned release into `target`; returns the HelixSR folder.
     `progress(done, total)` is optional. Raises FetchError (OSError when a file cannot be written)."""
@@ -146,12 +180,15 @@ def fetch(target: Path, progress=None) -> Path:
         part.unlink(missing_ok=True)
         raise FetchError('the downloaded zip does not match the pinned SHA-256; it was deleted')
     extract(part, target)
+    folder = install_folder(target)
+    forget_build(folder)             # the replaced folder's build record must not pass for these files
+    write_package_record(target, folder)
     part.unlink(missing_ok=True)
     try:
         work.rmdir()
     except OSError:
         pass
-    return install_folder(target)
+    return folder
 
 
 def setup_command() -> list:
@@ -159,11 +196,42 @@ def setup_command() -> list:
     return ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SETUP, '-Yes']
 
 
-def build(folder: Path, on_line=None, encoding='utf-8', creationflags=0) -> None:
-    """Runs the setup in `folder` (stdin closed, no console window) and passes each output line to `on_line`.
-    Raises FetchError unless it ends with the network built (BUILT beside the DLL)."""
+class SetupLog:
+    """Appends the setup's output to `path` and passes every line on to `sink`. The launcher's log box is gone with
+    its window, so this file is what a failed build is diagnosed from afterwards (it rides in a bug report).
+    Call it like an on_line function; a log that cannot be written never stops a build."""
+
+    def __init__(self, path, sink=None):
+        self.path, self.sink = (Path(path) if path else None), sink
+
+    def write(self, text: str) -> None:
+        if not self.path:
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.path, 'a', encoding='utf-8') as stream:
+                stream.write(text + '\n')
+        except OSError:
+            pass
+
+    def start(self, heading: str) -> None:
+        self.write(f'=== {time.strftime("%Y-%m-%d %H:%M:%S")} {heading} ===')
+
+    def __call__(self, text: str) -> None:
+        self.write(text)
+        if self.sink:
+            self.sink(text)
+
+
+def build(folder: Path, on_line=None, encoding='utf-8', creationflags=0, log_path=None) -> None:
+    """Runs the setup in `folder` (stdin closed, no console window) and passes each output line to `on_line`,
+    keeping the whole output in `log_path` when one is given. Raises FetchError unless it ends with the network
+    built (BUILT beside the DLL). The setup builds only what the folder is missing (HelixSR's own scripts do): a
+    folder whose network is built does not get a new BUILT record, so one that is already there is kept."""
     folder = Path(folder)
-    (folder / BUILT).unlink(missing_ok=True)  # a file of an earlier build must not pass for this one
+    log = SetupLog(log_path, on_line)
+    if not built(folder):  # a file of an earlier build must not pass for this one; the build's own record is kept
+        (folder / BUILT).unlink(missing_ok=True)
     try:
         process = subprocess.Popen(setup_command(), cwd=str(folder), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, creationflags=creationflags)
@@ -171,14 +239,14 @@ def build(folder: Path, on_line=None, encoding='utf-8', creationflags=0) -> None
         raise FetchError(f'could not start PowerShell: {error}')
     timer = threading.Timer(BUILD_TIMEOUT, process.kill)
     timer.start()
+    log.start(f"HelixSR's setup: {' '.join(setup_command())} (in {folder})")
     tail = []
     try:
         for raw in iter(process.stdout.readline, b''):
             line = raw.decode(encoding, errors='replace').rstrip()
             if line:
                 tail = (tail + [line])[-5:]
-                if on_line:
-                    on_line(line)
+                log(line)
         code = process.wait()
     finally:
         timer.cancel()
@@ -191,11 +259,13 @@ def build(folder: Path, on_line=None, encoding='utf-8', creationflags=0) -> None
 
 
 def install(target: Path, progress=None, on_line=None, encoding='utf-8', creationflags=0, force=False) -> Path:
-    """Fetch (unless the folder is already extracted and `force` is off), then build. Returns the folder."""
+    """Fetch (unless the folder is already extracted and `force` is off), then build. Returns the folder. The
+    setup's output is kept in `target` as SETUP_LOG, and `fetch` records there which pinned zip the files came
+    from (PACKAGE), so a bug report has both."""
     if force or not extracted(target):
         fetch(target, progress)
     folder = install_folder(target)
-    build(folder, on_line, encoding, creationflags)
+    build(folder, on_line, encoding, creationflags, Path(target) / SETUP_LOG)
     return folder
 
 

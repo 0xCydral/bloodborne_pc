@@ -4,6 +4,18 @@ All notable changes to the Windows fork of the Bloodborne PS4 port. The format f
 
 The release pages for 1.6 to 1.6.15 were deleted on 2026-10-09. The git tags remain, and this file replaces their notes. Version 1.6.9 is folded into 1.6.10 (see there).
 
+## [Unreleased]
+
+### Fixed
+
+- **Install HelixSR** works again with the re-uploaded HelixSR 1.9.0 release: the old `HelixSR-1.9.0.2.zip` asset was removed, so installs and reinstalls failed with a 404. The launcher pins `HelixSR-1.9.0.zip` instead (3803249 bytes, checked by SHA-256 as before).
+- A HelixSR copy built from an earlier release is shown as such: the launcher records which pinned zip the files came from (`helixsr\helixsr-package.json`), and **Update HelixSR** replaces a copy that did not come from it (one built from the removed 1.9.0.2 asset, or HelixSR 1.8.1) instead of rebuilding it in place.
+
+### Changed
+
+- The HelixSR setup's output is kept in `helixsr\helixsr-setup.log`, so a failed install stays readable after the launcher closes; attach it to a bug report when installing HelixSR fails.
+- **Install HelixSR** now says what HelixSR 1.9.0's setup does: the release is about 4 MB, and the setup downloads NVIDIA's DLSS 310.7.0 DLL, about 400 MB more of NVIDIA's files for HelixSR's frame generation, and about 70 MB of tools into `%LOCALAPPDATA%\HelixSR`.
+
 ## [1.8.0-beta.2] - 2026-10-13
 
 ### Changed
