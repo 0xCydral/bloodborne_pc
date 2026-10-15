@@ -2,3 +2,7 @@
 # core.autocrlf=true would otherwise produce. Patches keep the checkout's line endings: build.sh
 # applies them to submodule files that are checked out the same way, so both sides must match.
 *.sh text eol=lf
+
+# The launcher's translations are edited with Windows editors and are reviewed as CRLF; the attribute gives
+# every checkout (Linux included) the same CRLF file, while the blob keeps the tree's normalized LF.
+launcher/bbport_lang.py text eol=crlf

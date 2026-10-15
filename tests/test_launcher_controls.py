@@ -9,6 +9,7 @@ import os
 import queue
 import struct
 import re
+import subprocess
 import sys
 import tempfile
 import types
@@ -545,8 +546,13 @@ class TranslationTests(unittest.TestCase):
             self.assertEqual(bbport_lang.table(language)[note].count('{}'), 1, language)
 
     def test_the_file_keeps_its_windows_line_endings(self):
-        data = (ROOT / 'launcher' / 'bbport_lang.py').read_bytes()
-        self.assertEqual(data.count(b'\n'), data.count(b'\r\n'))
+        """The translations stay CRLF wherever they are checked out: they are edited with Windows editors, and
+        .gitattributes marks the file `text eol=crlf`, so every platform gets the same CRLF file (the committed
+        blob stays normalized to LF). The rule is what is checked: the file bytes depend on which checkout runs
+        the tests, and this guards the rule on all of them."""
+        result = subprocess.run(['git', 'check-attr', 'eol', '--', 'launcher/bbport_lang.py'],
+                                cwd=ROOT, capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout.strip(), 'launcher/bbport_lang.py: eol: crlf')
 
     @unittest.skipUnless(sys.platform == 'win32', 'the Windows launcher')
     def test_every_text_of_the_page_is_in_the_translations(self):
