@@ -40,20 +40,21 @@ brief, plus the smaller lessons of item 6), the way the earlier AMDLSS features 
   downloaded asset was hashed again here).
 - `.../download/v1.9.0/HelixSR-1.9.0.2.zip` answers 404; `HelixSR-1.9.0.zip` answers 200 with
   `content-length: 3803249`.
-- The zip holds 99 members: `HelixSR-1.9.0/helixsr-setup.ps1` (the script the launcher runs; `-Yes` is still a
-  switch), `helixsr-setup.bat`, `amd_fidelityfx_dx12.dll`, `helixsr-fg/nvexec64.dll`, and the `setup/` build
-  machinery (`setup/helixsr_setup.py`, `setup/helixsr_install.py`, `setup/fg/*`). The port's `extracted()`
-  check (SETUP + DLL) and `setup_command()` (`helixsr-setup.ps1 -Yes`) stay valid.
+- The zip holds 99 members: `HelixSR-1.9.0/helixsr-setup.ps1` (the script the launcher runs; `-Yes` and `-NoFg`
+  are still switches), `helixsr-setup.bat`, `amd_fidelityfx_dx12.dll`, `helixsr-fg/nvexec64.dll`, and the
+  `setup/` build machinery (`setup/helixsr_setup.py`, `setup/helixsr_install.py`, `setup/fg/*`). The port's
+  `extracted()` check (SETUP + DLL) stays valid.
 - The setup's own flow (its plain-text scripts): a `--status` pass reports `network=`/`fg=`; it builds only
   what is missing; the network is embedded into the DLL and `helixsr_setup.json` is written; frame generation
   downloads NVIDIA's Streamline 2.8.0 `nvngx_dlssg.dll`, `_nvngx.dll` out of NVIDIA's 595.71.05 driver package
   (~404 MB) and Intel's `libxell.dll`, and embeds its network into the DLL too (footer `HXSRFG01`) with an
-  `helixsr-fg\` folder (about 400 MB of NVIDIA downloads once). The per-game step runs `helixsr_install.py`;
-  with stdin closed its questions hit EOF, `ask()` returns False and `main()` returns, exit 0 (its
-  :1211/:1338) — the port's no-window contract holds.
-- The port's one-click runs the setup unmodified with `-Yes`, so it now also builds the frame generation; the
-  consent text (launcher:503) and README name the downloads (about 4 MB zip, ~70 MB tools, ~400 MB NVIDIA for
-  FG) instead of the old "about 57 MB".
+  `helixsr-fg\` folder (about 400 MB of NVIDIA downloads once; the launcher's `-NoFg` skips this build). The
+  per-game step runs `helixsr_install.py`; with stdin closed its questions hit EOF, `ask()` returns False and
+  `main()` returns, exit 0 (its :1211/:1338) — the port's no-window contract holds.
+- The port's one-click runs the setup with `-Yes -NoFg` (`setup_command()`, tools/fetch_helixsr.py:194-199):
+  the network is built and the frame generation is skipped, so nothing downloads the ~400 MB; the consent text
+  (launcher:503) and README name what remains (about 4 MB zip, ~70 MB tools) instead of the old "about 57 MB"
+  and no longer announce an NVIDIA frame-generation download.
 
 ## Scope
 
@@ -63,12 +64,14 @@ brief, plus the smaller lessons of item 6), the way the earlier AMDLSS features 
 
 ## Decisions
 
-- **Keep the setup invocation as it is (no `-NoFg`).** The port has always run HelixSR's own setup, unmodified,
-  with `-Yes`; 1.9.0's setup builds the upscaler network *and* its frame generation, and the consent text now
-  discloses the ~400 MB that costs. `-NoFg` would save that download and is the right call if the port decides
-  it will never use HelixSR's frame generation; it is not done here because item 5 is an assessment only and
-  the reference (AMDLSS) deliberately keeps the files built. The FG build's failure is non-fatal in the setup
-  (a step line, exit 0), so the port's success criterion (`helixsr_setup.json`) is unaffected.
+- **The setup runs with `-NoFg`** (the owner's call; it reverses this record's first decision to keep the
+  setup's default). This port uses HelixSR as an upscaler only, so its one-click must not make players fetch
+  about 400 MB of NVIDIA's files for a frame generation it never uses. Verified from the release's own scripts
+  (read only): `helixsr-setup.ps1` declares the `-NoFg` switch (:23), counts the frame generation as done when
+  it is passed (:75) and forwards `--no-fg` (:95); `setup/helixsr_setup.py`'s `build_fg()` returns at once on
+  `--no-fg` (:259-262), before `setup/fg/fg_setup.py` — the only thing that downloads the Streamline DLL, the
+  NGX core and Intel's `libxell.dll` — can run. The network build, the `-Yes` license prompt and the success
+  criterion (`helixsr_setup.json`) are unchanged. Commits `bb3f5a6`.
 - **The zip record is `helixsr-package.json` beside `HelixSR-1.9.0\`** (fields `version`, `zip_name`,
   `zip_sha256`, `folder`), written by `fetch()` the moment the verified zip is on disk — the same shape as
   AMDLSS. `fetch()` also drops the replaced build's record (`forget_build`), so a failed rebuild of the new
@@ -96,19 +99,25 @@ brief, plus the smaller lessons of item 6), the way the earlier AMDLSS features 
   :268) + README's bug-report line. Commit `4239951`.
 - [x] T4 Item 4 and the two inapplicable item-6 lessons checked and recorded above.
 - [x] T5 DLSS 4 FG feasibility assessed below; no renderer code.
+- [x] T6 (follow-up, owner call) The setup runs with `-NoFg` (tools/fetch_helixsr.py:194-199); the consent
+  text, README and changelog no longer announce the frame generation; the command test asserts the flag.
+  Commit `bb3f5a6`.
 
 ## Evidence (observed)
 
-- `python3 -m unittest discover -s tests` → `Ran 553 tests ... FAILED (failures=1, skipped=284)`. The one
-  failure is `test_launcher_controls.TranslationTests.test_the_file_keeps_its_windows_line_endings`, which
-  expects a CRLF checkout of `launcher/bbport_lang.py`; that file is LF both in this checkout and at the base
-  commit (bytes unchanged by this work) — pre-existing and environment-dependent, not part of this change.
+- `python3 -m unittest discover -s tests` → `Ran 553 tests ... OK (skipped=284)` after the two follow-ups.
+  The run before them was `FAILED (failures=1, skipped=284)`:
+  `test_launcher_controls.TranslationTests.test_the_file_keeps_its_windows_line_endings` asserted a CRLF
+  working tree, which only a checkout that materialized one ever had (the blob has been LF since `f5fe629`),
+  so it failed on Linux. `9fc4d45` marks `launcher/bbport_lang.py` `text eol=crlf` and checks that rule with
+  `git check-attr eol`, so every checkout gets the CRLF file and the test passes anywhere.
 - `python3 -m unittest discover -s tests -p "test_fetch_helixsr.py"` → `Ran 25 tests ... OK`.
 - The launcher tests are `skipUnless(sys.platform == 'win32')`; they skip on this Linux box and run in CI
   (`.github/workflows/windows-package.yml` runs pytest on windows-latest). On Linux the same states were
   smoke-run by importing the launcher directly: `helixsr_outdated` true for a stale/older/record-less copy,
   false for pinned+record, newer, chosen, outside, and helper-missing; `helixsr_folder` still picks the
-  newest; the consent text names the license, 4 MB, ~400 MB and ~70 MB in both languages.
+  newest; the consent text names the license, 4 MB and ~70 MB in both languages and no NVIDIA
+  frame-generation download.
 - Live fetch with the real pins (`fetch()` into a temp dir) → `HelixSR-1.9.0` extracted, `package_current`
   true, record `{'version': '1.9.0', 'zip_name': 'HelixSR-1.9.0.zip', 'zip_sha256': '795268f6…', 'folder':
   'HelixSR-1.9.0'}`, `helixsr-setup.ps1` and the DLL present.
@@ -148,8 +157,8 @@ Effort estimate: a prototype is a multi-week spike (2-4 weeks of focused work), 
 unknowns: the NGX Vulkan contract on a non-NVIDIA GPU (HelixSR's own shims are what make that work for
 HelixSR Scaler; the port would consume the same built files, but nothing here verifies it), the present
 ordering/timing with the port's swapchain and its existing frame-generation seam, and validating without a
-Windows test game. The files the setup now places are the prerequisite and are covered by the install
-disclosure above.
+Windows test game. The prerequisite files (HelixSR's frame-generation build, which the port's one-click now
+skips with `-NoFg`) would have to be built first: the same setup without that flag, or HelixSR Desktop.
 
 ## Unverified / limits
 
