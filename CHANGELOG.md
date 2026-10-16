@@ -4,7 +4,11 @@ All notable changes to the Windows fork of the Bloodborne PS4 port. The format f
 
 The release pages for 1.6 to 1.6.15 were deleted on 2026-10-09. The git tags remain, and this file replaces their notes. Version 1.6.9 is folded into 1.6.10 (see there).
 
-## [Unreleased]
+## [1.8.0-beta.4] - 2026-10-16
+
+### Fixed
+
+- The launcher no longer fails to start with `invalid literal for int()` after **Browse…** on the Play page. That button saved the chosen folder as the frame cap instead of the game folder (since 1.6.17), and every start after that stopped in the frame generation note. The button sets the game folder now, and the launcher repairs a settings file this already happened to: the frame cap goes back to Auto, and the folder becomes the game folder when it holds the game.
 
 ### Changed
 
