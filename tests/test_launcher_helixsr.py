@@ -502,7 +502,7 @@ class InstallButtonTests(unittest.TestCase):
 
     def test_the_button_reads_update_for_a_copy_from_another_zip(self):
         self.window.helixsr_button = mock.MagicMock()
-        install(self.port / 'helixsr' / 'HelixSR-1.9.0')
+        install(launcher.fetch_helixsr.install_folder(self.port / 'helixsr'))  # the pinned folder, but no record yet
         launcher.Launcher.refresh_helixsr_install(self.window)
         self.assertEqual(self.window.helixsr_button.configure.call_args.kwargs['text'], 'Update HelixSR')
         self.assertIn('Update HelixSR', self.window.helixsr_info.configure.call_args.kwargs['text'])
