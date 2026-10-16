@@ -4,7 +4,9 @@ All notable changes to the Windows fork of the Bloodborne PS4 port. The format f
 
 The release pages for 1.6 to 1.6.15 were deleted on 2026-10-09. The git tags remain, and this file replaces their notes. Version 1.6.9 is folded into 1.6.10 (see there).
 
-## [1.8.0-beta.4] - 2026-10-16
+## [1.8.0-beta.5] - 2026-10-16
+
+1.8.0-beta.4 was tagged but never released: its Windows test run failed on a test that still expected HelixSR 1.9.0.
 
 ### Fixed
 
