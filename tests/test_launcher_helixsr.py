@@ -125,17 +125,17 @@ class OutdatedTests(unittest.TestCase):
         self.root = self.port / 'helixsr'
 
     def test_the_pinned_copy_is_current(self):
-        folder = install(self.root / 'HelixSR-1.9.0')
+        folder = install(self.root / 'HelixSR-1.9.1')
         launcher.fetch_helixsr.write_package_record(self.root)
         self.assertTrue(launcher.fetch_helixsr.package_current(self.root))
         self.assertFalse(launcher.helixsr_outdated(folder))
 
     def test_a_copy_from_another_zip_is_outdated(self):
-        folder = install(self.root / 'HelixSR-1.9.0')  # the same version name as the pinned release
+        folder = install(self.root / 'HelixSR-1.9.1')  # the same version name as the pinned release
         self.assertTrue(launcher.helixsr_outdated(folder))
 
     def test_an_older_release_is_outdated(self):
-        folder = install(self.root / 'HelixSR-1.8.1')
+        folder = install(self.root / 'HelixSR-1.9.0')  # the release the pin just moved off
         launcher.fetch_helixsr.write_package_record(self.root)  # even a current record does not cover it
         self.assertTrue(launcher.helixsr_outdated(folder))
 
@@ -377,7 +377,7 @@ class InstallFunctionTests(unittest.TestCase):
         for language in ('en', 'ru'):
             with mock.patch.object(launcher, 'LANG', language):
                 text = launcher.helixsr_consent_text()
-            for part in ('https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt', '310.7.0', '70',
+            for part in ('https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt', '310.7.0', '131', '70',
                          '%LOCALAPPDATA%\\HelixSR'):
                 self.assertIn(part, text)
             self.assertNotIn('400', text)  # -NoFg: nothing downloads NVIDIA's files for frame generation
@@ -511,7 +511,7 @@ class InstallButtonTests(unittest.TestCase):
         self.assertEqual(self.window.helixsr_button.configure.call_args.kwargs['text'], 'Reinstall HelixSR')
 
     def test_an_outdated_copy_is_refetched_not_built_in_place(self):
-        folder = self.port / 'helixsr' / 'HelixSR-1.9.0'
+        folder = self.port / 'helixsr' / 'HelixSR-1.9.1'
         folder.mkdir(parents=True)
         (folder / 'amd_fidelityfx_dx12.dll').write_bytes(b'MZ')
         (folder / 'helixsr-setup.ps1').write_text('#', encoding='utf-8')  # extracted, but never built

@@ -502,12 +502,12 @@ HELIXSR_LICENSE_URL = 'https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt'
 
 def helixsr_consent_text():
     """What the player agrees to before the one-click install runs HelixSR's setup with -Yes -NoFg."""
-    return _("The launcher downloads HelixSR {} (about 4 MB) from github.com/lonewolf0622/HelixSR and runs its own "
+    return _("The launcher downloads HelixSR {} (about 131 MB) from github.com/lonewolf0622/HelixSR and runs its own "
              "setup. The setup downloads NVIDIA's DLSS 310.7.0 DLL from NVIDIA's GitHub, under NVIDIA's license:\n{}\n\n"
              "It then builds the network on this PC (a few minutes; one-time downloads of about 70 MB of tools into "
              "%LOCALAPPDATA%\\HelixSR) and deletes the DLL. The network stays on this PC: do not share it.\n\n"
              "Continue?",
-             "Лаунчер скачает HelixSR {} (около 4 МБ) с github.com/lonewolf0622/HelixSR и запустит его установку. "
+             "Лаунчер скачает HelixSR {} (около 131 МБ) с github.com/lonewolf0622/HelixSR и запустит его установку. "
              "Она скачает DLL NVIDIA DLSS 310.7.0 с GitHub NVIDIA на условиях лицензии NVIDIA:\n{}\n\n"
              "Затем сеть собирается на этом ПК (несколько минут; единоразово скачивается около 70 МБ инструментов "
              "в %LOCALAPPDATA%\\HelixSR), а DLL удаляется. Сеть остаётся на этом ПК: не передавайте её.\n\n"

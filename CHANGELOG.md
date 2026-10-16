@@ -4,6 +4,13 @@ All notable changes to the Windows fork of the Bloodborne PS4 port. The format f
 
 The release pages for 1.6 to 1.6.15 were deleted on 2026-10-09. The git tags remain, and this file replaces their notes. Version 1.6.9 is folded into 1.6.10 (see there).
 
+## [Unreleased]
+
+### Changed
+
+- **Install HelixSR** now installs [HelixSR 1.9.1](https://github.com/lonewolf0622/HelixSR/releases/tag/v1.9.1): a recalibrated int8 network (less flicker, about 9% faster on GPUs with fast int8 math), the speed boost switch working again, an option to use the game's reactive mask, and experimental builds for Radeon RX 400/500 and older GCN. An existing 1.9.0 copy is offered as **Update HelixSR**; the install still runs the setup with `-NoFg`, so nothing downloads NVIDIA's frame generation.
+- The HelixSR release is about 131 MB now instead of about 4 MB: it also carries `helixsr-scaler` (HelixSR Scaler's files, unused by this port).
+
 ## [1.8.0-beta.3] - 2026-10-15
 
 ### Fixed

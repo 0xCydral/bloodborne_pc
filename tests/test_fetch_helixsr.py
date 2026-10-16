@@ -79,9 +79,9 @@ class Base(unittest.TestCase):
 
 class FetchTests(Base):
     def test_the_pins_are_the_verified_release(self):
-        self.assertEqual(fetch.ZIP_URL, "https://github.com/lonewolf0622/HelixSR/releases/download/v1.9.0/HelixSR-1.9.0.zip")
-        self.assertEqual(fetch.ZIP_SIZE, 3803249)
-        self.assertEqual(fetch.ZIP_SHA256, "795268f60a1262cd7c8cb01a38f553751cc380fa0cbec63c8f466b6807468be4")
+        self.assertEqual(fetch.ZIP_URL, "https://github.com/lonewolf0622/HelixSR/releases/download/v1.9.1/HelixSR-1.9.1.zip")
+        self.assertEqual(fetch.ZIP_SIZE, 137494566)
+        self.assertEqual(fetch.ZIP_SHA256, "9f329a8a4359bc21830b1e0b3f8211f52d851760faddc5cbde74e245cf5140ff")
 
     def test_extraction_layout(self):
         body = make_zip(MEMBERS)
@@ -217,7 +217,7 @@ class BuildTests(Base):
                 fetch.build(self.folder)
 
     def test_a_record_the_setup_did_not_rewrite_is_kept(self):
-        # with the network built, 1.9.0's setup does not write helixsr_setup.json again; keeping the record is
+        # with the network built, 1.9.1's setup does not write helixsr_setup.json again; keeping the record is
         # what lets a re-run (and the command line) pass instead of failing on a missing file
         self.writes_marker()
         with mock.patch.object(fetch.subprocess, "Popen", side_effect=self.runs()):

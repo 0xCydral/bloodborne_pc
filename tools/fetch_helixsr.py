@@ -6,15 +6,15 @@
 
 HelixSR (https://github.com/lonewolf0622/HelixSR, a closed, free program that runs NVIDIA's DLSS network as
 Direct3D 12 compute shaders) is not part of the port. This script does what a player did by hand: fetches the
-pinned release zip, checks its SHA-256, extracts it (the zip holds a HelixSR-1.9.0 folder) and runs HelixSR's own
+pinned release zip, checks its SHA-256, extracts it (the zip holds a HelixSR-1.9.1 folder) and runs HelixSR's own
 `helixsr-setup.ps1 -Yes -NoFg` in it, with stdin closed so the per-game installer skips every game. `-Yes`
 accepts the download of NVIDIA's DLSS DLL under NVIDIA's license, which the setup then deletes; `-NoFg` skips
-HelixSR's frame generation (the port uses HelixSR as an upscaler only), whose build downloads about 400 MB more
-of NVIDIA's files. What the setup builds stays on this PC. Because of that, the command line refuses to build
-without --yes, and the launcher asks first. Download is resumable (HTTP Range into a .part file) and reuses
-fetch_fsr4vk's FetchError and hashing. Which pinned zip the extracted files came from is recorded beside the
-folder (PACKAGE; `package_current`), the setup's whole output is kept as SETUP_LOG, and `install` writes both so
-a build from another zip and a failed build stay visible after the run.
+HelixSR's frame generation (the port uses HelixSR as an upscaler only; 1.9.1's setup otherwise asks about it
+once), whose build downloads about 400 MB more of NVIDIA's files. What the setup builds stays on this PC. Because
+of that, the command line refuses to build without --yes, and the launcher asks first. Download is resumable
+(HTTP Range into a .part file) and reuses fetch_fsr4vk's FetchError and hashing. Which pinned zip the extracted
+files came from is recorded beside the folder (PACKAGE; `package_current`), the setup's whole output is kept as
+SETUP_LOG, and `install` writes both so a build from another zip and a failed build stay visible after the run.
 
 DIR defaults to the helixsr folder of the port, where the launcher looks (helixsr_folder()).
 Exit status 0: the network is built (helixsr_setup.json sits beside amd_fidelityfx_dx12.dll). 1: failed (the
@@ -36,13 +36,14 @@ from pathlib import Path, PureWindowsPath
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fetch_fsr4vk import CHUNK, FetchError, sha256_of  # noqa: E402
 
-VERSION = '1.9.0'
-ZIP_NAME = 'HelixSR-1.9.0.zip'
+VERSION = '1.9.1'
+ZIP_NAME = 'HelixSR-1.9.1.zip'
 ZIP_URL = f'https://github.com/lonewolf0622/HelixSR/releases/download/v{VERSION}/{ZIP_NAME}'
-# The values GitHub publishes for the v1.9.0 asset (re-uploaded 2026-10-15; the earlier HelixSR-1.9.0.2.zip was
-# removed). A later re-upload makes the check fail with "does not match the pinned SHA-256" until the pins update.
-ZIP_SIZE = 3803249
-ZIP_SHA256 = '795268f60a1262cd7c8cb01a38f553751cc380fa0cbec63c8f466b6807468be4'
+# The values GitHub publishes for the v1.9.1 asset (published 2026-10-16; it carries HelixSR Scaler's files too,
+# hence the about 131 MB). A later re-upload makes the check fail with "does not match the pinned SHA-256" until
+# the pins update.
+ZIP_SIZE = 137494566
+ZIP_SHA256 = '9f329a8a4359bc21830b1e0b3f8211f52d851760faddc5cbde74e245cf5140ff'
 TOP = f'HelixSR-{VERSION}'  # the folder the zip extracts to
 DLL = 'amd_fidelityfx_dx12.dll'
 BUILT = 'helixsr_setup.json'  # written beside the DLL when the setup built the network
@@ -196,7 +197,9 @@ def setup_command() -> list:
     """HelixSR's own setup, run with the HelixSR folder as the working directory. `-NoFg` skips its frame
     generation: that build is the only thing that downloads NVIDIA's Streamline DLL and NGX core (about 400 MB
     from NVIDIA), and the port uses HelixSR as an upscaler only. The setup treats the frame generation as done
-    then (its -NoFg switch maps to `--no-fg`, which makes helixsr_setup.py's build_fg() return at once)."""
+    then (its -NoFg switch maps to `--no-fg`, which makes helixsr_setup.py's build_fg() return at once) and,
+    where 1.9.1 would ask about it once (helixsr-setup.ps1's frame-generation question), `-NoFg` answers for the
+    player: no question, no download."""
     return ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SETUP, '-Yes', '-NoFg']
 
 
