@@ -18,13 +18,16 @@ SUPPORTED = {'helixsr': (True, ''), 'dlss': (False, 'not an NVIDIA RTX GPU')}
 NO_SHARING = {'helixsr': (False, 'the Vulkan driver cannot share images with Direct3D 12'), 'dlss': (True, '')}
 
 
-def install(folder, built=True):
-    """A HelixSR folder: the DLL, and the file its setup writes beside it."""
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / DLL).write_bytes(b'MZ')
+def install(folder, built=True, nested=False):
+    """A HelixSR release folder and the folder helixsr_folder() answers with (the one that holds the DLL).
+    1.9.x: both are `folder`, with the setup's file beside the DLL. 2.0.0 (nested): the DLL is in
+    `folder`\\HelixSR-fsrfg and the setup's file is in `folder`."""
+    dll = folder / 'HelixSR-fsrfg' if nested else folder
+    dll.mkdir(parents=True, exist_ok=True)
+    (dll / DLL).write_bytes(b'MZ')
     if built:
         (folder / BUILT).write_text('{}', encoding='utf-8')
-    return folder
+    return dll
 
 
 @unittest.skipUnless(sys.platform == 'win32', 'the Windows launcher')
@@ -46,6 +49,27 @@ class FolderTests(unittest.TestCase):
     def test_the_release_zip_extracts_to_a_versioned_subfolder(self):
         inner = install(self.root / 'mine' / 'HelixSR-1.8.1')
         self.assertEqual(launcher.helixsr_folder(str(self.root / 'mine')), inner)
+
+    def test_2_0_keeps_the_dll_in_the_fsrfg_folder_of_the_release(self):
+        inner = install(self.root / 'mine' / 'HelixSR-2.0.0', nested=True)
+        self.assertEqual(inner.name, 'HelixSR-fsrfg')
+        self.assertEqual(launcher.helixsr_folder(str(self.root / 'mine')), inner)
+        self.assertEqual(launcher.helixsr_folder(str(self.root / 'mine' / 'HelixSR-2.0.0')), inner)  # the release folder
+        self.assertEqual(launcher.helixsr_folder(str(inner)), inner)  # or the DLL's own folder
+
+    def test_2_0_unpacked_into_the_port_folder_is_found(self):
+        inner = install(self.port / 'helixsr' / 'HelixSR-2.0.0', nested=True)
+        self.assertEqual(launcher.helixsr_folder(''), inner)
+
+    def test_2_0_wins_over_a_1_9_copy_next_to_it(self):
+        install(self.root / 'mine' / 'HelixSR-1.9.1')
+        newest = install(self.root / 'mine' / 'HelixSR-2.0.0', nested=True)
+        self.assertEqual(launcher.helixsr_folder(str(self.root / 'mine')), newest)
+
+    def test_a_1_9_copy_is_found_when_2_0_is_not_there(self):
+        old = install(self.root / 'mine' / 'HelixSR-1.9.1')
+        (self.root / 'mine' / 'HelixSR-2.0.0' / 'HelixSR-fsrfg').mkdir(parents=True)  # a release folder without the DLL
+        self.assertEqual(launcher.helixsr_folder(str(self.root / 'mine')), old)
 
     def test_only_one_level_down_is_searched(self):
         install(self.root / 'mine' / 'extra' / 'HelixSR-1.8.1')
@@ -125,22 +149,27 @@ class OutdatedTests(unittest.TestCase):
         self.root = self.port / 'helixsr'
 
     def test_the_pinned_copy_is_current(self):
-        folder = install(self.root / 'HelixSR-1.9.1')
+        folder = install(self.root / 'HelixSR-2.0.0', nested=True)
         launcher.fetch_helixsr.write_package_record(self.root)
         self.assertTrue(launcher.fetch_helixsr.package_current(self.root))
         self.assertFalse(launcher.helixsr_outdated(folder))
 
     def test_a_copy_from_another_zip_is_outdated(self):
-        folder = install(self.root / 'HelixSR-1.9.1')  # the same version name as the pinned release
+        folder = install(self.root / 'HelixSR-2.0.0', nested=True)  # the same version name as the pinned release
         self.assertTrue(launcher.helixsr_outdated(folder))
 
-    def test_an_older_release_is_outdated(self):
-        folder = install(self.root / 'HelixSR-1.9.0')  # the release the pin just moved off
-        launcher.fetch_helixsr.write_package_record(self.root)  # even a current record does not cover it
-        self.assertTrue(launcher.helixsr_outdated(folder))
+    def test_a_1_9_copy_is_the_update_case(self):
+        # the releases the pin moved off: their DLL sits in the release folder itself, and they are found, built,
+        # and offered as Update
+        for version in ('1.9.1', '1.9.0', '1.10.0'):  # 1.10.0 is below 2.0.0 as a number
+            with self.subTest(version=version):
+                folder = install(self.root / f'HelixSR-{version}')
+                launcher.fetch_helixsr.write_package_record(self.root)  # even a current record does not cover it
+                self.assertTrue(launcher.helixsr_built(folder))
+                self.assertTrue(launcher.helixsr_outdated(folder))
 
     def test_a_newer_release_is_left_alone(self):
-        folder = install(self.root / 'HelixSR-1.10.0')
+        folder = install(self.root / 'HelixSR-2.1.0', nested=True)
         self.assertFalse(launcher.helixsr_outdated(folder))
 
     def test_a_folder_the_player_chose_is_left_alone(self):
@@ -163,6 +192,12 @@ class StateTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.built = install(Path(self.tmp.name) / 'built')
         self.unbuilt = install(Path(self.tmp.name) / 'unbuilt', built=False)
+        self.built_2 = install(Path(self.tmp.name) / 'HelixSR-2.0.0', nested=True)  # the record is one folder up
+        self.unbuilt_2 = install(Path(self.tmp.name) / 'unbuilt-2', built=False, nested=True)
+
+    def test_2_0_is_built_by_the_record_one_folder_above_the_dll(self):
+        self.assertEqual(launcher.helixsr_state(SUPPORTED, True, self.built_2), ('ok', ''))
+        self.assertEqual(launcher.helixsr_state(SUPPORTED, True, self.unbuilt_2), ('no', launcher.HELIXSR_UNBUILT_REASON))
 
     def test_the_gpu_that_cannot_share_images_keeps_its_reason(self):
         for experimental in (False, True):
@@ -261,6 +296,12 @@ class EnvironmentTests(unittest.TestCase):
     def test_the_nested_release_folder_is_what_it_is_told(self):
         inner = install(self.root / 'mine' / 'HelixSR-1.8.1')
         self.assertEqual(self.environment(True, str(self.root / 'mine'))['BB_HELIXSR_DIR'], str(inner))
+
+    def test_2_0_is_told_the_fsrfg_folder_that_holds_the_dll(self):
+        inner = install(self.root / 'mine' / 'HelixSR-2.0.0', nested=True)
+        env = self.environment(True, str(self.root / 'mine'))
+        self.assertEqual(env['BB_HELIXSR_DIR'], str(inner))
+        self.assertTrue(env['BB_HELIXSR_DIR'].endswith('HelixSR-fsrfg'))
 
     def test_experimental_off_keeps_helixsr_from_loading(self):
         folder = install(self.root / 'mine')
@@ -372,6 +413,8 @@ class InstallFunctionTests(unittest.TestCase):
         self.assertFalse(launcher.helixsr_built(None))
         self.assertFalse(launcher.helixsr_built(install(self.port / 'a', built=False)))
         self.assertTrue(launcher.helixsr_built(install(self.port / 'b')))
+        self.assertFalse(launcher.helixsr_built(install(self.port / 'c', built=False, nested=True)))
+        self.assertTrue(launcher.helixsr_built(install(self.port / 'd', nested=True)))  # the file is one folder up
 
     def test_the_consent_names_the_license_the_dll_and_the_downloads_in_both_languages(self):
         for language in ('en', 'ru'):
@@ -502,7 +545,7 @@ class InstallButtonTests(unittest.TestCase):
 
     def test_the_button_reads_update_for_a_copy_from_another_zip(self):
         self.window.helixsr_button = mock.MagicMock()
-        install(launcher.fetch_helixsr.install_folder(self.port / 'helixsr'))  # the pinned folder, but no record yet
+        install(launcher.fetch_helixsr.install_folder(self.port / 'helixsr'), nested=True)  # pinned folder, no record yet
         launcher.Launcher.refresh_helixsr_install(self.window)
         self.assertEqual(self.window.helixsr_button.configure.call_args.kwargs['text'], 'Update HelixSR')
         self.assertIn('Update HelixSR', self.window.helixsr_info.configure.call_args.kwargs['text'])
@@ -510,10 +553,20 @@ class InstallButtonTests(unittest.TestCase):
         launcher.Launcher.refresh_helixsr_install(self.window)
         self.assertEqual(self.window.helixsr_button.configure.call_args.kwargs['text'], 'Reinstall HelixSR')
 
+    def test_a_1_9_copy_reads_update_not_reinstall(self):
+        self.window.helixsr_button = mock.MagicMock()
+        install(self.port / 'helixsr' / 'HelixSR-1.9.1')  # built, DLL in the release folder
+        launcher.Launcher.refresh_helixsr_install(self.window)
+        self.assertEqual(self.window.helixsr_button.configure.call_args.kwargs['text'], 'Update HelixSR')
+
+    def test_updating_a_1_9_copy_downloads_the_pinned_release(self):
+        install(self.port / 'helixsr' / 'HelixSR-1.9.1')
+        self.assertTrue(self.start(built=False).call_args[0][3])  # force: nothing of the old folder is reused
+
     def test_an_outdated_copy_is_refetched_not_built_in_place(self):
-        folder = self.port / 'helixsr' / 'HelixSR-1.9.1'
-        folder.mkdir(parents=True)
-        (folder / 'amd_fidelityfx_dx12.dll').write_bytes(b'MZ')
+        folder = self.port / 'helixsr' / 'HelixSR-2.0.0'
+        (folder / 'HelixSR-fsrfg').mkdir(parents=True)
+        (folder / 'HelixSR-fsrfg' / 'amd_fidelityfx_dx12.dll').write_bytes(b'MZ')
         (folder / 'helixsr-setup.ps1').write_text('#', encoding='utf-8')  # extracted, but never built
         run = self.start(built=False)
         self.assertTrue(run.call_args[0][3])  # force: the files did not come from the pinned zip

@@ -467,7 +467,8 @@ def fsr4vk_dir():
 # its own setup; the game loads its amd_fidelityfx_dx12.dll from the folder BB_HELIXSR_DIR names. Nothing of
 # it is bundled or downloaded here.
 HELIXSR_DLL = 'amd_fidelityfx_dx12.dll'
-HELIXSR_BUILT = 'helixsr_setup.json'  # written beside the DLL by helixsr-setup.bat
+HELIXSR_FSRFG = 'HelixSR-fsrfg'  # 2.0.0 keeps the DLL in this folder of the release; 1.9.x kept it in the release folder
+HELIXSR_BUILT = 'helixsr_setup.json'  # written by helixsr-setup.bat beside the DLL (1.9.x) or one folder above it (2.0.0)
 HELIXSR_URL = 'https://github.com/lonewolf0622/HelixSR/releases'
 HELIXSR_MISSING_REASON = ('HelixSR is not installed: get it from github.com/lonewolf0622/HelixSR, run its setup once, '
                           'then pick its folder in Advanced')
@@ -484,15 +485,22 @@ def helixsr_release_order(folder):
     return 0, (), folder.name
 
 
+def helixsr_dll_folder(folder):
+    """The folder under `folder` that holds the DLL: HelixSR-fsrfg of a 2.0.0 release folder, else `folder` itself
+    (a 1.9.x release folder, or HelixSR-fsrfg picked directly); None when neither has it."""
+    return next((p for p in (Path(folder) / HELIXSR_FSRFG, Path(folder)) if (p / HELIXSR_DLL).is_file()), None)
+
+
 def helixsr_folder(setting=''):
     """The folder that holds HelixSR's DLL, or None. A chosen folder is the only place looked in (a wrong one is
     'not installed', never replaced by another copy); with none chosen it is <port>\\helixsr. Either may be that
-    folder itself or the parent of HelixSR-* folders (the release zip extracts to HelixSR-1.9.0): the newest
-    version wins. No fixed place outside the port: any user can create a folder at a drive's root."""
+    folder itself or the parent of HelixSR-* folders (the release zip extracts to HelixSR-2.0.0, whose DLL is in its
+    HelixSR-fsrfg folder): the newest version wins. No fixed place outside the port: any user can create a folder
+    at a drive's root."""
     root = Path(setting.strip()) if setting and setting.strip() else PORT_DIR / 'helixsr'
     try:
         nested = sorted((p for p in root.glob('HelixSR-*') if p.is_dir()), key=helixsr_release_order, reverse=True)
-        return next((folder for folder in [root, *nested] if (folder / HELIXSR_DLL).is_file()), None)
+        return next((dll for dll in map(helixsr_dll_folder, [root, *nested]) if dll), None)
     except OSError:
         return None
 
@@ -501,7 +509,7 @@ HELIXSR_LICENSE_URL = 'https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt'
 
 
 def helixsr_consent_text():
-    """What the player agrees to before the one-click install runs HelixSR's setup with -Yes -NoFg."""
+    """What the player agrees to before the one-click install runs HelixSR's setup with -NoFg."""
     return _("The launcher downloads HelixSR {} (about 131 MB) from github.com/lonewolf0622/HelixSR and runs its own "
              "setup. The setup downloads NVIDIA's DLSS 310.7.0 DLL from NVIDIA's GitHub, under NVIDIA's license:\n{}\n\n"
              "It then builds the network on this PC (a few minutes; one-time downloads of about 70 MB of tools into "
@@ -520,8 +528,9 @@ def helixsr_install_problem():
 
 
 def helixsr_built(folder):
-    """True when `folder` (helixsr_folder()'s answer) holds a built network: HelixSR's setup wrote helixsr_setup.json."""
-    return bool(folder) and (Path(folder) / HELIXSR_BUILT).is_file()
+    """True when `folder` (helixsr_folder()'s answer, the one with the DLL) holds a built network: HelixSR's setup
+    wrote helixsr_setup.json beside the DLL (1.9.x) or one folder above it (2.0.0's HelixSR-fsrfg)."""
+    return bool(folder) and any((p / HELIXSR_BUILT).is_file() for p in (Path(folder), Path(folder).parent))
 
 
 def helixsr_outdated(found, setting=''):
@@ -532,9 +541,10 @@ def helixsr_outdated(found, setting=''):
     if not found or setting.strip() or fetch_helixsr is None:
         return False
     root = PORT_DIR / 'helixsr'
-    if found.parent != root:
+    release = found.parent if found.name == HELIXSR_FSRFG else found  # 2.0.0's DLL folder is inside the release folder
+    if release.parent != root:
         return False
-    pinned, order = helixsr_release_order(Path(fetch_helixsr.TOP)), helixsr_release_order(found)
+    pinned, order = helixsr_release_order(Path(fetch_helixsr.TOP)), helixsr_release_order(release)
     if order > pinned:
         return False  # newer than the pinned release: the player's copy to keep
     return order < pinned or not fetch_helixsr.package_current(root)
@@ -748,7 +758,7 @@ def helixsr_state(support, experimental, folder):
         return 'no', EXPERIMENTAL_REASON
     if folder is None:
         return 'no', HELIXSR_MISSING_REASON
-    if not (Path(folder) / HELIXSR_BUILT).is_file():
+    if not helixsr_built(folder):
         return 'no', HELIXSR_UNBUILT_REASON
     return 'ok', ''
 

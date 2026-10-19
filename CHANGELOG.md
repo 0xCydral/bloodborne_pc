@@ -4,6 +4,14 @@ All notable changes to the Windows fork of the Bloodborne PS4 port. The format f
 
 The release pages for 1.6 to 1.6.15 were deleted on 2026-10-09. The git tags remain, and this file replaces their notes. Version 1.6.9 is folded into 1.6.10 (see there).
 
+## [Unreleased]
+
+### Changed
+
+- **Install HelixSR** now installs [HelixSR 2.0.0](https://github.com/lonewolf0622/HelixSR/releases/tag/v2.0.0): one DLL for upscaling and DLSS frame generation. By HelixSR's notes, upscaling takes about 15 to 18 percent less GPU time at DLAA and Ultra Quality, and Ultra Performance about a third less. The release is about 131 MB. This port still uses HelixSR as an upscaler only, so the launcher keeps frame generation switched off in the install (`-NoFg`), and the download of NVIDIA's frame-generation files stays out.
+- HelixSR 2.0 keeps `amd_fidelityfx_dx12.dll` in the release's `HelixSR-fsrfg` folder and writes `helixsr_setup.json` one folder above it. The launcher and the game now find the DLL there, and accept the file beside the DLL as well, so a HelixSR 1.9.x copy still works and **Update HelixSR** offers the new release for it.
+- The launcher answers the HelixSR setup's one question (download NVIDIA's DLSS DLL) itself, on its standard input, and no longer passes `-Yes`. HelixSR 2.0's `-Yes` also answers the per-game questions with their defaults, which would install HelixSR into every game it finds; the install changes no game.
+
 ## [1.8.0-beta.5] - 2026-10-16
 
 1.8.0-beta.4 was tagged but never released: its Windows test run failed on a test that still expected HelixSR 1.9.0.

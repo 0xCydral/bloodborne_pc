@@ -1083,7 +1083,9 @@ std::string Problem() {
         return "HelixSR is not installed: amd_fidelityfx_dx12.dll is not in " +
                std::string{reinterpret_cast<const char*>(u8.data()), u8.size()};
     }
-    if (!std::filesystem::is_regular_file(dir / L"helixsr_setup.json", error)) {
+    // 1.9.x wrote helixsr_setup.json beside the DLL; 2.0.0 keeps the DLL in HelixSR-fsrfg and the record one folder up.
+    if (!std::filesystem::is_regular_file(dir / L"helixsr_setup.json", error) &&
+        !std::filesystem::is_regular_file(dir.parent_path() / L"helixsr_setup.json", error)) {
         return "HelixSR's network is not built: run helixsr-setup.bat in its folder once";
     }
     return {};

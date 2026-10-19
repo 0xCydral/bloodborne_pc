@@ -6,18 +6,21 @@
 
 HelixSR (https://github.com/lonewolf0622/HelixSR, a closed, free program that runs NVIDIA's DLSS network as
 Direct3D 12 compute shaders) is not part of the port. This script does what a player did by hand: fetches the
-pinned release zip, checks its SHA-256, extracts it (the zip holds a HelixSR-1.9.1 folder) and runs HelixSR's own
-`helixsr-setup.ps1 -Yes -NoFg` in it, with stdin closed so the per-game installer skips every game. `-Yes`
-accepts the download of NVIDIA's DLSS DLL under NVIDIA's license, which the setup then deletes; `-NoFg` skips
-HelixSR's frame generation (the port uses HelixSR as an upscaler only; 1.9.1's setup otherwise asks about it
-once), whose build downloads about 400 MB more of NVIDIA's files. What the setup builds stays on this PC. Because
-of that, the command line refuses to build without --yes, and the launcher asks first. Download is resumable
+pinned release zip, checks its SHA-256, extracts it (the zip holds a HelixSR-2.0.0 folder) and runs HelixSR's own
+`helixsr-setup.ps1 -NoFg` in it. The setup's one question, whether it may download NVIDIA's DLSS DLL under NVIDIA's
+license (which it then deletes), is answered with a single `y` on stdin, and stdin is closed after it, so the
+per-game installer finds no answer and skips every game. `-Yes` is not used: 2.0.0's setup hands it on to the
+per-game installer, which would then install HelixSR into every game it finds. `-NoFg` skips HelixSR's frame
+generation (the port uses HelixSR as an upscaler only), whose build downloads about 400 MB more of NVIDIA's files.
+What the setup builds stays on this PC. Because of that, the command line refuses to build without --yes, and the
+launcher asks first. Download is resumable
 (HTTP Range into a .part file) and reuses fetch_fsr4vk's FetchError and hashing. Which pinned zip the extracted
 files came from is recorded beside the folder (PACKAGE; `package_current`), the setup's whole output is kept as
 SETUP_LOG, and `install` writes both so a build from another zip and a failed build stay visible after the run.
 
 DIR defaults to the helixsr folder of the port, where the launcher looks (helixsr_folder()).
-Exit status 0: the network is built (helixsr_setup.json sits beside amd_fidelityfx_dx12.dll). 1: failed (the
+Exit status 0: the network is built (helixsr_setup.json sits in the release folder, one level above the
+HelixSR-fsrfg folder that holds amd_fidelityfx_dx12.dll; 1.9.x kept both in the release folder). 1: failed (the
 reason is the last line on stderr).
 """
 import argparse
@@ -36,17 +39,19 @@ from pathlib import Path, PureWindowsPath
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fetch_fsr4vk import CHUNK, FetchError, sha256_of  # noqa: E402
 
-VERSION = '1.9.1'
-ZIP_NAME = 'HelixSR-1.9.1.zip'
+VERSION = '2.0.0'
+ZIP_NAME = 'HelixSR-2.0.0.zip'
 ZIP_URL = f'https://github.com/lonewolf0622/HelixSR/releases/download/v{VERSION}/{ZIP_NAME}'
-# The values GitHub publishes for the v1.9.1 asset (published 2026-10-16; it carries HelixSR Scaler's files too,
+# The values GitHub publishes for the v2.0.0 asset (published 2026-10-19; it carries HelixSR Scaler's files too,
 # hence the about 131 MB). A later re-upload makes the check fail with "does not match the pinned SHA-256" until
 # the pins update.
-ZIP_SIZE = 137494566
-ZIP_SHA256 = '9f329a8a4359bc21830b1e0b3f8211f52d851760faddc5cbde74e245cf5140ff'
+ZIP_SIZE = 136997025
+ZIP_SHA256 = '0d60686eddbb0abd680b27d12a088344b212464ebf0a2dc18d10387e1c817f52'
 TOP = f'HelixSR-{VERSION}'  # the folder the zip extracts to
+FSRFG = 'HelixSR-fsrfg'  # 2.0.0 keeps the DLL in this folder of the release; 1.9.x kept it in the release folder
 DLL = 'amd_fidelityfx_dx12.dll'
-BUILT = 'helixsr_setup.json'  # written beside the DLL when the setup built the network
+BUILT = 'helixsr_setup.json'  # written in the release folder when the setup built the network
+CONSENT = b'y\n'  # the setup's one question (download NVIDIA's DLSS DLL?); see setup_command()
 PACKAGE = 'helixsr-package.json'  # beside the extracted folder: which pinned zip its files came from
 SETUP_LOG = 'helixsr-setup.log'  # the setup's output, kept beside the folder so a failed build stays readable
 SETUP = 'helixsr-setup.ps1'
@@ -63,12 +68,20 @@ def install_folder(target: Path) -> Path:
     return Path(target) / TOP
 
 
+def dll_folder(folder: Path):
+    """The folder that holds the DLL: HelixSR-fsrfg inside a 2.0.0 release folder, else the folder itself (1.9.x, or
+    HelixSR-fsrfg given directly); None when neither has it."""
+    return next((p for p in (Path(folder) / FSRFG, Path(folder)) if (p / DLL).is_file()), None)
+
+
 def extracted(target: Path) -> bool:
-    return (install_folder(target) / SETUP).is_file() and (install_folder(target) / DLL).is_file()
+    return (install_folder(target) / SETUP).is_file() and dll_folder(install_folder(target)) is not None
 
 
 def built(folder: Path) -> bool:
-    return (Path(folder) / BUILT).is_file() and (Path(folder) / DLL).is_file()
+    """True when the setup's record sits beside the DLL (1.9.x) or one folder above it (2.0.0)."""
+    dll = dll_folder(folder)
+    return dll is not None and any((p / BUILT).is_file() for p in (dll, dll.parent))
 
 
 def _download(part: Path, progress) -> None:
@@ -140,7 +153,7 @@ def extract(part: Path, target: Path) -> None:
     except zipfile.BadZipFile as error:
         raise FetchError(f'the zip is damaged: {error}')
     if not extracted(target):
-        raise FetchError(f'the zip does not hold {TOP}\\{SETUP} and {TOP}\\{DLL}')
+        raise FetchError(f'the zip does not hold {TOP}\\{SETUP} and {TOP}\\{FSRFG}\\{DLL}')
 
 
 def write_package_record(target: Path, folder: Path = None) -> None:
@@ -197,10 +210,10 @@ def setup_command() -> list:
     """HelixSR's own setup, run with the HelixSR folder as the working directory. `-NoFg` skips its frame
     generation: that build is the only thing that downloads NVIDIA's Streamline DLL and NGX core (about 400 MB
     from NVIDIA), and the port uses HelixSR as an upscaler only. The setup treats the frame generation as done
-    then (its -NoFg switch maps to `--no-fg`, which makes helixsr_setup.py's build_fg() return at once) and,
-    where 1.9.1 would ask about it once (helixsr-setup.ps1's frame-generation question), `-NoFg` answers for the
-    player: no question, no download."""
-    return ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SETUP, '-Yes', '-NoFg']
+    then (its -NoFg switch maps to `--no-fg`, which makes helixsr_setup.py's build_fg() return at once). There is no
+    `-Yes`: in 2.0.0 it also answers the per-game installer's questions with their defaults, which installs
+    HelixSR into every game found. build() answers the download question on stdin instead (CONSENT)."""
+    return ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SETUP, '-NoFg']
 
 
 class SetupLog:
@@ -231,19 +244,26 @@ class SetupLog:
 
 
 def build(folder: Path, on_line=None, encoding='utf-8', creationflags=0, log_path=None) -> None:
-    """Runs the setup in `folder` (stdin closed, no console window) and passes each output line to `on_line`,
-    keeping the whole output in `log_path` when one is given. Raises FetchError unless it ends with the network
-    built (BUILT beside the DLL). The setup builds only what the folder is missing (HelixSR's own scripts do): a
-    folder whose network is built does not get a new BUILT record, so one that is already there is kept."""
+    """Runs the setup in `folder` (no console window) and passes each output line to `on_line`, keeping the whole
+    output in `log_path` when one is given. Its stdin gets CONSENT and is closed: that answers the download
+    question, and every later question (the per-game installer's) finds no answer. Raises FetchError unless it
+    ends with the network built (BUILT in the release folder). The setup builds only what the folder is missing
+    (HelixSR's own scripts do): a folder whose network is built does not get a new BUILT record, so one that is
+    already there is kept."""
     folder = Path(folder)
     log = SetupLog(log_path, on_line)
     if not built(folder):  # a file of an earlier build must not pass for this one; the build's own record is kept
         (folder / BUILT).unlink(missing_ok=True)
     try:
-        process = subprocess.Popen(setup_command(), cwd=str(folder), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        process = subprocess.Popen(setup_command(), cwd=str(folder), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, creationflags=creationflags)
     except OSError as error:
         raise FetchError(f'could not start PowerShell: {error}')
+    try:
+        process.stdin.write(CONSENT)
+        process.stdin.close()
+    except OSError:  # the setup already ended: its exit code says why
+        pass
     timer = threading.Timer(BUILD_TIMEOUT, process.kill)
     timer.start()
     log.start(f"HelixSR's setup: {' '.join(setup_command())} (in {folder})")
