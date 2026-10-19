@@ -16,7 +16,7 @@ namespace Vulkan::HelixSr {
 std::wstring DllPath();
 
 /// Empty when HelixSR can be used, else the reason for the menu: turned off (BB_HELIXSR=0), the DLL
-/// is missing, or its network is not built (no helixsr_setup.json next to the DLL).
+/// is missing, or its network is not built (no helixsr_setup.json next to the DLL or in its parent folder).
 std::string Problem();
 
 /// What the bridge needs from the renderer's Vulkan device. Every Vulkan function the bridge calls
