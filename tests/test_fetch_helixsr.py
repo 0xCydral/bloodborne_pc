@@ -37,24 +37,11 @@ def make_zip(members):
     return buffer.getvalue()
 
 
-class FakeStdin:
-    """The setup's stdin: keeps what was written, and whether it was closed."""
-
-    def __init__(self):
-        self.data, self.closed = b"", False
-
-    def write(self, data):
-        self.data += data
-
-    def close(self):
-        self.closed = True
-
-
 class FakeProcess:
-    """What subprocess.Popen returns: some output, an exit code, and an optional side effect when it 'runs'."""
+    """What subprocess.Popen returns: some output and an exit code."""
 
     def __init__(self, output=b"", code=0):
-        self.stdout, self.code, self.stdin = io.BytesIO(output), code, FakeStdin()
+        self.stdout, self.code = io.BytesIO(output), code
 
     def wait(self):
         return self.code
@@ -243,46 +230,40 @@ class BuildTests(Base):
             return FakeProcess(output, code)
         return start
 
-    def test_the_command_line_is_the_setup_with_no_frame_generation_and_no_yes(self):
-        # -NoFg is what keeps the about 400 MB of NVIDIA downloads for HelixSR's frame generation away. No -Yes: in
-        # 2.0.0 it is also handed to the per-game installer, which then installs HelixSR into every game it finds.
-        self.assertEqual(fetch.setup_command(), ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                                                 "helixsr-setup.ps1", "-NoFg"])
-        self.assertNotIn("-Yes", fetch.setup_command())
+    def test_the_command_line_is_the_setup_with_the_dll_and_no_frame_generation(self):
+        # -NoFg is what keeps the about 400 MB of NVIDIA downloads for HelixSR's frame generation away. -Dlss hands
+        # the setup NVIDIA's DLL, so it asks nothing. No -Yes: in 2.0.0 it is also handed to the per-game installer,
+        # which then installs HelixSR into every game it finds.
+        base = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "helixsr-setup.ps1", "-NoFg"]
+        self.assertEqual(fetch.setup_command(), base)  # a built network needs no DLL
+        self.assertEqual(fetch.setup_command("n.dll"), base + ["-Dlss", "n.dll"])
 
-    def test_it_runs_in_the_folder_with_one_answer_on_stdin_and_no_window(self):
+    def test_no_command_that_reaches_the_setup_carries_yes(self):
+        commands = [fetch.setup_command(), fetch.setup_command("n.dll")]
+        with mock.patch.object(fetch.subprocess, "Popen", side_effect=self.runs(marker=True)) as popen:
+            fetch.build(self.folder, dlss=self.root / "nvngx_dlss.dll")
+        commands.append(popen.call_args[0][0])
+        for command in commands:
+            self.assertFalse({"-yes", "--yes", "-y"} & {part.lower() for part in command}, command)
+            self.assertIn("-NoFg", command)
+        self.assertEqual(commands[-1][-2:], ["-Dlss", str(self.root / "nvngx_dlss.dll")])  # NVIDIA's DLL is the consent
+
+    def test_it_runs_in_the_folder_with_stdin_closed_and_no_window(self):
         with mock.patch.object(fetch.subprocess, "Popen", side_effect=self.runs(b"building\r\n", marker=True)) as popen:
-            fetch.build(self.folder, creationflags=0x08000000)
+            fetch.build(self.folder, creationflags=0x08000000, dlss=Path("n.dll"))
         args, kwargs = popen.call_args
-        self.assertEqual(args[0], fetch.setup_command())
+        self.assertEqual(args[0], fetch.setup_command("n.dll"))
         self.assertEqual(kwargs["cwd"], str(self.folder))
-        self.assertIs(kwargs["stdin"], subprocess.PIPE)
+        self.assertIs(kwargs["stdin"], subprocess.DEVNULL)  # no question finds an answer, the per-game installer's included
         self.assertIs(kwargs["stderr"], subprocess.STDOUT)
         self.assertEqual(kwargs["stdout"], subprocess.PIPE)
         self.assertEqual(kwargs["creationflags"], 0x08000000)
 
-    def test_stdin_gets_the_download_answer_and_nothing_a_game_question_would_accept(self):
-        # The only question the build asks is NVIDIA's download ("y"); the per-game installer's questions take s, f,
-        # r or n, so after that single line they find no answer and change no game.
-        process = FakeProcess(b"", 0)
+    def test_a_built_folder_gets_no_dll_argument(self):
         self.writes_marker()
-        with mock.patch.object(fetch.subprocess, "Popen", return_value=process):
-            fetch.build(self.folder)
-        self.assertEqual(process.stdin.data, b"y\n")
-        self.assertTrue(process.stdin.closed)
-        self.assertEqual(process.stdin.data.decode().strip().lower()[:1], "y")
-        self.assertNotIn(process.stdin.data.decode().strip().lower()[:1], "sfrn")
-
-    def test_a_setup_that_already_ended_does_not_break_the_answer(self):
-        class Broken(FakeStdin):
-            def write(self, data):
-                raise BrokenPipeError
-
-        process = FakeProcess(b"error: no\n", 1)
-        process.stdin = Broken()
-        with mock.patch.object(fetch.subprocess, "Popen", return_value=process):
-            with self.assertRaisesRegex(fetch.FetchError, r"exit 1\): error: no"):
-                fetch.build(self.folder)
+        with mock.patch.object(fetch.subprocess, "Popen", side_effect=self.runs()) as popen:
+            fetch.build(self.folder, dlss=Path("n.dll"))
+        self.assertEqual(popen.call_args[0][0], fetch.setup_command())
 
     def test_output_lines_are_streamed_in_order(self):
         lines = []
@@ -347,14 +328,70 @@ class BuildTests(Base):
                 fetch.build(self.folder)
 
 
+class DlssTests(Base):
+    """NVIDIA's DLSS DLL: pinned like the setup's own, SHA-checked, and never kept."""
+
+    def serve_dlss(self, blob):
+        for name, value in (("DLSS_SIZE", len(blob)), ("DLSS_SHA256", hashlib.sha256(blob).hexdigest())):
+            patcher = mock.patch.object(fetch, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(fetch, "download", lambda part, progress, url, size: part.write_bytes(blob))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_pins_are_the_ones_helixsrs_own_setup_checks(self):
+        self.assertEqual(fetch.DLSS_URL, "https://raw.githubusercontent.com/NVIDIA/DLSS/v310.7.0/lib/Windows_x86_64/rel/nvngx_dlss.dll")
+        self.assertEqual(fetch.DLSS_SIZE, 58977904)
+        self.assertEqual(fetch.DLSS_SHA256, "be6e434a94ca32499515eb62ca0e6c274526055d568d0426e4c652dcdfb6ee6e")
+        self.assertEqual(fetch.NVIDIA_LICENSE_URL, "https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt")
+
+    def test_the_dll_is_checked_and_then_deleted(self):
+        self.serve_dlss(b"abc")
+        path = fetch.fetch_dlss(self.target)
+        self.assertEqual(path, self.target / ".download" / fetch.DLSS_NAME)
+        self.assertEqual(path.read_bytes(), b"abc")
+        fetch.drop_dlss(path)
+        self.assertFalse(path.exists())
+        self.assertFalse((self.target / ".download").exists())
+
+    def test_a_dll_with_the_wrong_hash_is_rejected_and_deleted(self):
+        self.serve_dlss(b"abc")
+        with mock.patch.object(fetch, "download", lambda part, progress, url, size: part.write_bytes(b"abd")):
+            with self.assertRaisesRegex(fetch.FetchError, "SHA-256"):
+                fetch.fetch_dlss(self.target)
+        self.assertEqual(list((self.target / ".download").iterdir()), [])
+
+    def test_the_download_goes_to_the_dll_url(self):
+        calls = []
+        def record(part, progress, url, size):
+            calls.append((url, size))
+            part.write_bytes(b"")
+        with mock.patch.object(fetch, "download", record):
+            with self.assertRaises(fetch.FetchError):  # an empty file is not the pinned DLL
+                fetch.fetch_dlss(self.target)
+        self.assertEqual(calls, [(fetch.DLSS_URL, fetch.DLSS_SIZE)])
+
+
 class InstallTests(Base):
-    def test_an_extracted_folder_is_not_downloaded_again_unless_forced(self):
+    def extracted_folder(self):
         folder = self.target / TOP
         folder.mkdir(parents=True)
         (folder / "HelixSR-fsrfg").mkdir()
         (folder / "HelixSR-fsrfg" / "amd_fidelityfx_dx12.dll").write_bytes(b"MZ")
         (folder / "helixsr-setup.ps1").write_text("#", encoding="utf-8")
-        with mock.patch.object(fetch, "fetch") as download, mock.patch.object(fetch, "build") as run:
+        return folder
+
+    def fake_dlss(self, target, progress=None):
+        work = Path(target) / ".download"
+        work.mkdir(parents=True, exist_ok=True)
+        (work / fetch.DLSS_NAME).write_bytes(b"NVIDIA DLSS")
+        return work / fetch.DLSS_NAME
+
+    def test_an_extracted_folder_is_not_downloaded_again_unless_forced(self):
+        folder = self.extracted_folder()
+        with mock.patch.object(fetch, "fetch") as download, mock.patch.object(fetch, "build") as run, \
+                mock.patch.object(fetch, "fetch_dlss", side_effect=self.fake_dlss):
             self.assertEqual(fetch.install(self.target), folder)
             download.assert_not_called()
             run.assert_called_once()
@@ -364,19 +401,49 @@ class InstallTests(Base):
     def test_a_fresh_target_downloads_then_builds_in_that_order(self):
         order = []
         with mock.patch.object(fetch, "fetch", side_effect=lambda *a: order.append("fetch")), \
-                mock.patch.object(fetch, "build", side_effect=lambda *a: order.append("build")):
+                mock.patch.object(fetch, "fetch_dlss", side_effect=lambda *a: order.append("dlss") or Path("n.dll")), \
+                mock.patch.object(fetch, "build", side_effect=lambda *a, **k: order.append("build")):
             fetch.install(self.target)
-        self.assertEqual(order, ["fetch", "build"])
+        self.assertEqual(order, ["fetch", "dlss", "build"])
 
     def test_the_setup_log_lands_in_the_target(self):
-        folder = self.target / TOP
-        folder.mkdir(parents=True)
-        (folder / "HelixSR-fsrfg").mkdir()
-        (folder / "HelixSR-fsrfg" / "amd_fidelityfx_dx12.dll").write_bytes(b"MZ")
-        (folder / "helixsr-setup.ps1").write_text("#", encoding="utf-8")
-        with mock.patch.object(fetch, "fetch"), mock.patch.object(fetch, "build") as run:
+        self.extracted_folder()
+        with mock.patch.object(fetch, "fetch"), mock.patch.object(fetch, "fetch_dlss", side_effect=self.fake_dlss), \
+                mock.patch.object(fetch, "build") as run:
             fetch.install(self.target)
         self.assertEqual(run.call_args[0][4], self.target / "helixsr-setup.log")
+
+    def test_the_build_gets_the_dll_and_it_is_deleted_after_it(self):
+        folder = self.extracted_folder()
+        seen = []
+
+        def start(command, **_kwargs):
+            seen.append((command, Path(command[-1]).read_bytes()))  # the DLL is there while the setup runs
+            (folder / fetch.BUILT).write_text("{}", encoding="utf-8")
+            return FakeProcess()
+        with mock.patch.object(fetch, "fetch_dlss", side_effect=self.fake_dlss), \
+                mock.patch.object(fetch.subprocess, "Popen", side_effect=start):
+            fetch.install(self.target)
+        command, blob = seen[0]
+        self.assertEqual(command[-2], "-Dlss")
+        self.assertEqual(blob, b"NVIDIA DLSS")
+        self.assertFalse((self.target / ".download").exists())
+
+    def test_the_dll_is_deleted_after_a_failed_build_too(self):
+        self.extracted_folder()
+        with mock.patch.object(fetch, "fetch_dlss", side_effect=self.fake_dlss), \
+                mock.patch.object(fetch.subprocess, "Popen", return_value=FakeProcess(b"boom\n", 1)):
+            with self.assertRaisesRegex(fetch.FetchError, "exit 1"):
+                fetch.install(self.target)
+        self.assertFalse((self.target / ".download" / fetch.DLSS_NAME).exists())
+
+    def test_a_built_folder_downloads_no_dll(self):
+        folder = self.extracted_folder()
+        (folder / fetch.BUILT).write_text("{}", encoding="utf-8")
+        with mock.patch.object(fetch, "fetch_dlss", side_effect=AssertionError("a built folder needs no DLL")), \
+                mock.patch.object(fetch.subprocess, "Popen", return_value=FakeProcess()) as popen:
+            self.assertEqual(fetch.install(self.target), folder)
+        self.assertNotIn("-Dlss", popen.call_args[0][0])
 
     def test_the_command_line_runs_nothing_without_yes(self):
         err = io.StringIO()

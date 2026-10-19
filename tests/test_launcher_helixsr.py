@@ -1,5 +1,6 @@
 """The launcher's HelixSR rules: where its folder is found, when the entry can be picked and why not, what the
 game is told, and what happens to a saved choice that cannot run any more."""
+import io
 import queue
 import sys
 import tempfile
@@ -399,6 +400,34 @@ class InstallFunctionTests(unittest.TestCase):
         self.assertEqual(args[0], self.port / 'helixsr')
         self.assertEqual((args[1], args[2], args[4], args[5]), (steps.append, lines.append, launcher.NO_WINDOW, True))
 
+    def test_the_setup_gets_the_dll_and_no_yes_and_the_dll_is_gone_afterwards(self):
+        folder = self.port / 'helixsr' / launcher.fetch_helixsr.TOP
+        install(folder, built=False, nested=True)
+        (folder / 'helixsr-setup.ps1').write_text('#', encoding='utf-8')
+        seen = []
+
+        def start(command, **kwargs):
+            seen.append((command, kwargs['stdin'], Path(command[-1]).read_bytes()))
+            (folder / launcher.HELIXSR_BUILT).write_text('{}')
+            return mock.MagicMock(stdout=io.BytesIO(b''), wait=lambda: 0, poll=lambda: 0)
+
+        def fake_dlss(target, progress=None):
+            path = Path(target) / '.download' / launcher.fetch_helixsr.DLSS_NAME
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'NVIDIA DLSS')
+            return path
+
+        with mock.patch.object(launcher.fetch_helixsr, 'fetch_dlss', side_effect=fake_dlss), \
+                mock.patch.object(launcher.fetch_helixsr.subprocess, 'Popen', side_effect=start):
+            self.assertEqual(launcher.install_helixsr(True), '')
+        command, stdin, blob = seen[0]
+        self.assertIn('-NoFg', command)
+        self.assertEqual(command[-2], '-Dlss')
+        self.assertEqual(blob, b'NVIDIA DLSS')
+        self.assertFalse({'-yes', '--yes', '-y'} & {part.lower() for part in command})
+        self.assertIs(stdin, launcher.fetch_helixsr.subprocess.DEVNULL)
+        self.assertFalse((self.port / 'helixsr' / '.download').exists())
+
     def test_failures_come_back_as_their_reason(self):
         for error in (launcher.fetch_helixsr.FetchError('the zip is damaged'), OSError('disk full')):
             with mock.patch.object(launcher.fetch_helixsr, 'install', side_effect=error):
@@ -420,8 +449,8 @@ class InstallFunctionTests(unittest.TestCase):
         for language in ('en', 'ru'):
             with mock.patch.object(launcher, 'LANG', language):
                 text = launcher.helixsr_consent_text()
-            for part in ('https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt', '310.7.0', '131', '70',
-                         '%LOCALAPPDATA%\\HelixSR'):
+            for part in ('https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt', '310.7.0', '131', '56', '70',
+                         '%LOCALAPPDATA%\\HelixSR'):  # 56: the launcher itself downloads NVIDIA's DLL
                 self.assertIn(part, text)
             self.assertNotIn('400', text)  # -NoFg: nothing downloads NVIDIA's files for frame generation
         self.assertRegex(text, '[а-я]')  # the last one was Russian

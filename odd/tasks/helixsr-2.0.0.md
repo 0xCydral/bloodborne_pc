@@ -58,10 +58,18 @@ as the **Update HelixSR** case.
   launcher); the launcher keeps `BB_HELIXSR_DIR` = the DLL folder, so the game's loader line did not change.
 - Accept the record beside the DLL **or** one folder above in the bridge, the launcher and the fetch tool: a 1.9.x
   folder (record beside the DLL) keeps working and shows as **Update HelixSR**; 2.0.0 (record one up) works.
-- No `-Yes`. The launcher's consent dialog stays the player's agreement; `build()` answers the one DLSS-download
-  question with `y\n` on the setup's stdin and closes it. `y` is not a valid answer to any per-game question
-  (`s/f/r/n`), so if the download question is not asked (network already built) the installer reads `y`, rejects it,
-  reads EOF and changes no game. The old `DEVNULL` would make the download question fail with EOF.
+- No `-Yes`. The launcher's consent dialog stays the player's agreement. ~~`build()` answered the one DLSS-download
+  question with `y\n` on stdin~~ (first version, replaced by T5): the tool now follows AMDLSS
+  (`/home/cydral/Projects/AMDLSS/amdlss/helixsr.py`, commit 6dd9517) and downloads NVIDIA's DLSS 310.7.0 DLL itself,
+  so the setup is never left to ask.
+- **The `-Dlss` route (T5).** `fetch_dlss()` downloads `nvngx_dlss.dll` from
+  `https://raw.githubusercontent.com/NVIDIA/DLSS/v310.7.0/lib/Windows_x86_64/rel/nvngx_dlss.dll` (58977904 B,
+  SHA-256 `be6e434a94ca32499515eb62ca0e6c274526055d568d0426e4c652dcdfb6ee6e`, the values in AMDLSS and in the
+  setup's own `helixsr_setup.py`) into `.download/`, `build()` runs `helixsr-setup.ps1 -NoFg -Dlss <path>` with
+  stdin `DEVNULL`, and `install()` deletes the DLL in a `finally` (a failed build too). A built folder gets no DLL
+  and no `-Dlss`. The setup's games step then reads the closed stdin, gets EOF on the first game and changes no
+  game; there is no `-Yes` anywhere. The consent text says the launcher downloads the DLL (about 56 MB), checks it,
+  names NVIDIA's license URL, and says the launcher deletes it.
 - State the size as "about 131 MB" (136997025 B = 130.7 MiB, rounded), unchanged from 1.9.1.
 
 ## Tasks
@@ -71,6 +79,10 @@ as the **Update HelixSR** case.
   failures) and green after.
 - [x] T3 Source: fetch tool, launcher, bridge `Problem()`; README; CHANGELOG `[Unreleased]`.
 - [x] T4 Run the suite; commit.
+- [x] T5 Switch the build to AMDLSS's `-Dlss` route: pinned NVIDIA DLL fetched and SHA-checked by the tool,
+  `-NoFg -Dlss <path>`, stdin closed, DLL deleted after the build; consent text, README, CHANGELOG, tests
+  (command has `-Dlss` and `-NoFg` and no `-Yes`; SHA check; deletion after success and failure; a built folder
+  fetches none; the 1.9.x layout and Update tests unchanged).
 
 ## Evidence (observed)
 
@@ -82,4 +94,9 @@ as the **Update HelixSR** case.
   temporary tree (no record: unbuilt; record one folder up: ok; flat record: ok). The Windows renderer was not
   built.
 - Not run: PowerShell and the setup itself (none here); the stdin answer reaching the setup's embedded Python
-  through `powershell -File` is read from the scripts, not observed.
+  through `powershell -File` is read from the scripts, not observed (superseded by T5).
+- T5: `python3 -m unittest discover -s tests`: `Ran 581 tests in 33.7s` / `OK (skipped=294)`;
+  `test_fetch_helixsr.py` alone: `Ran 39 tests ... OK`. Launcher tests imported with `sys.platform = 'win32'`
+  (`/tmp/hx-diff/run_launcher_tests.py`): `Ran 71 tests ... OK`.
+- T5 not run: PowerShell and the real setup with `-Dlss` (none here; `-Dlss` handling read in
+  `helixsr-setup.ps1:88` and `helixsr_setup.py:359`), and a live download of NVIDIA's DLL.

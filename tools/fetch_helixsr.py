@@ -7,14 +7,15 @@
 HelixSR (https://github.com/lonewolf0622/HelixSR, a closed, free program that runs NVIDIA's DLSS network as
 Direct3D 12 compute shaders) is not part of the port. This script does what a player did by hand: fetches the
 pinned release zip, checks its SHA-256, extracts it (the zip holds a HelixSR-2.0.0 folder) and runs HelixSR's own
-`helixsr-setup.ps1 -NoFg` in it. The setup's one question, whether it may download NVIDIA's DLSS DLL under NVIDIA's
-license (which it then deletes), is answered with a single `y` on stdin, and stdin is closed after it, so the
-per-game installer finds no answer and skips every game. `-Yes` is not used: 2.0.0's setup hands it on to the
-per-game installer, which would then install HelixSR into every game it finds. `-NoFg` skips HelixSR's frame
-generation (the port uses HelixSR as an upscaler only), whose build downloads about 400 MB more of NVIDIA's files.
-What the setup builds stays on this PC. Because of that, the command line refuses to build without --yes, and the
-launcher asks first. Download is resumable
-(HTTP Range into a .part file) and reuses fetch_fsr4vk's FetchError and hashing. Which pinned zip the extracted
+`helixsr-setup.ps1 -NoFg -Dlss FILE` in it. The tool downloads NVIDIA's DLSS 310.7.0 DLL itself (under NVIDIA's
+license; pinned size and SHA-256, the values HelixSR's own setup checks), hands it over as `-Dlss` and deletes it
+after the build, a failed one too. The setup's stdin is closed. The setup's own `-Yes` is never passed: 2.0.0's
+setup hands it on to the per-game installer, which would then install HelixSR into every game it finds, and
+without it that installer reads the closed stdin, gets the end of the input and changes no game. `-NoFg` skips
+HelixSR's frame generation (the port uses HelixSR as an upscaler only), whose build downloads about 400 MB more of
+NVIDIA's files. What the setup builds stays on this PC. Because of that, the command line refuses to build without
+--yes, and the launcher asks first. Downloads are resumable
+(HTTP Range into a .part file) and reuse fetch_fsr4vk's FetchError and hashing. Which pinned zip the extracted
 files came from is recorded beside the folder (PACKAGE; `package_current`), the setup's whole output is kept as
 SETUP_LOG, and `install` writes both so a build from another zip and a failed build stay visible after the run.
 
@@ -51,7 +52,13 @@ TOP = f'HelixSR-{VERSION}'  # the folder the zip extracts to
 FSRFG = 'HelixSR-fsrfg'  # 2.0.0 keeps the DLL in this folder of the release; 1.9.x kept it in the release folder
 DLL = 'amd_fidelityfx_dx12.dll'
 BUILT = 'helixsr_setup.json'  # written in the release folder when the setup built the network
-CONSENT = b'y\n'  # the setup's one question (download NVIDIA's DLSS DLL?); see setup_command()
+# NVIDIA's DLSS 310.7.0 DLL, which the setup builds HelixSR's network from: the same URL, size and SHA-256 as the
+# setup's own helixsr_setup.py. This tool fetches it after the player's consent and passes it as -Dlss.
+DLSS_NAME = 'nvngx_dlss.dll'
+DLSS_URL = 'https://raw.githubusercontent.com/NVIDIA/DLSS/v310.7.0/lib/Windows_x86_64/rel/nvngx_dlss.dll'
+DLSS_SIZE = 58977904
+DLSS_SHA256 = 'be6e434a94ca32499515eb62ca0e6c274526055d568d0426e4c652dcdfb6ee6e'
+NVIDIA_LICENSE_URL = 'https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt'
 PACKAGE = 'helixsr-package.json'  # beside the extracted folder: which pinned zip its files came from
 SETUP_LOG = 'helixsr-setup.log'  # the setup's output, kept beside the folder so a failed build stays readable
 SETUP = 'helixsr-setup.ps1'
@@ -85,15 +92,21 @@ def built(folder: Path) -> bool:
 
 
 def _download(part: Path, progress) -> None:
-    """Fills `part` with the zip, resuming what an earlier run left; the caller checks the hash."""
+    """Fills `part` with the zip (see download)."""
+    download(part, progress, ZIP_URL, ZIP_SIZE)
+
+
+def download(part: Path, progress, url: str, size: int) -> None:
+    """Fills `part` with the file at `url` (exactly `size` bytes), resuming what an earlier run left; the caller
+    checks the hash."""
     for attempt in range(4):
         have = part.stat().st_size if part.exists() else 0
-        if have > ZIP_SIZE:
+        if have > size:
             part.unlink()
             have = 0
-        if have == ZIP_SIZE:
+        if have == size:
             return
-        request = urllib.request.Request(ZIP_URL, headers={'User-Agent': 'bbport-fetch-helixsr'})
+        request = urllib.request.Request(url, headers={'User-Agent': 'bbport-fetch-helixsr'})
         if have:
             request.add_header('Range', f'bytes={have}-')
         try:
@@ -105,16 +118,16 @@ def _download(part: Path, progress) -> None:
                         out.write(block)
                         have += len(block)
                         if progress:
-                            progress(have, ZIP_SIZE)
+                            progress(have, size)
         except urllib.error.HTTPError as error:
             if error.code == 416:  # the part is longer than the file: drop it
                 part.unlink(missing_ok=True)
             elif attempt == 3:
-                raise FetchError(f'download failed: HTTP {error.code} from {ZIP_URL}')
+                raise FetchError(f'download failed: HTTP {error.code} from {url}')
         except (urllib.error.URLError, http.client.HTTPException, OSError, TimeoutError) as error:
             if attempt == 3:
                 raise FetchError(f'download failed: {error}')
-        if part.exists() and part.stat().st_size == ZIP_SIZE:
+        if part.exists() and part.stat().st_size == size:
             return
     raise FetchError('download failed: the file stayed incomplete')
 
@@ -206,14 +219,41 @@ def fetch(target: Path, progress=None) -> Path:
     return folder
 
 
-def setup_command() -> list:
-    """HelixSR's own setup, run with the HelixSR folder as the working directory. `-NoFg` skips its frame
-    generation: that build is the only thing that downloads NVIDIA's Streamline DLL and NGX core (about 400 MB
+def fetch_dlss(target: Path, progress=None) -> Path:
+    """Downloads NVIDIA's DLSS 310.7.0 DLL (pinned size and SHA-256) into `target`/.download and returns its path.
+    The setup builds HelixSR's network from it; it asks for it itself only when its caller passes `-Yes`, which
+    this tool cannot (see setup_command). The caller deletes it after the build (drop_dlss)."""
+    work = Path(target) / '.download'
+    work.mkdir(parents=True, exist_ok=True)
+    part, path = work / (DLSS_NAME + '.part'), work / DLSS_NAME
+    download(part, progress, DLSS_URL, DLSS_SIZE)
+    if part.stat().st_size != DLSS_SIZE or sha256_of(part) != DLSS_SHA256:
+        part.unlink(missing_ok=True)
+        raise FetchError("the downloaded NVIDIA DLSS DLL does not match the pinned SHA-256; it was deleted")
+    os.replace(part, path)
+    return path
+
+
+def drop_dlss(dlss: Path) -> None:
+    """Deletes the DLSS DLL fetch_dlss made (NVIDIA's file: it is not kept) and its work folder when empty."""
+    Path(dlss).unlink(missing_ok=True)
+    try:
+        Path(dlss).parent.rmdir()
+    except OSError:
+        pass
+
+
+def setup_command(dlss=None) -> list:
+    """HelixSR's own setup, run with the HelixSR folder as the working directory and stdin closed. `-NoFg` skips its
+    frame generation: that build is the only thing that downloads NVIDIA's Streamline DLL and NGX core (about 400 MB
     from NVIDIA), and the port uses HelixSR as an upscaler only. The setup treats the frame generation as done
     then (its -NoFg switch maps to `--no-fg`, which makes helixsr_setup.py's build_fg() return at once). There is no
     `-Yes`: in 2.0.0 it also answers the per-game installer's questions with their defaults, which installs
-    HelixSR into every game found. build() answers the download question on stdin instead (CONSENT)."""
-    return ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SETUP, '-NoFg']
+    HelixSR into every game found. Without it that step reads the closed stdin, gets the end of the input and
+    changes no game, so the player's consent is carried by the file this passes: the DLSS DLL (`-Dlss`). `dlss` is
+    None only when the network is built already."""
+    return ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SETUP, '-NoFg',
+            *(['-Dlss', str(dlss)] if dlss else [])]
 
 
 class SetupLog:
@@ -243,30 +283,26 @@ class SetupLog:
             self.sink(text)
 
 
-def build(folder: Path, on_line=None, encoding='utf-8', creationflags=0, log_path=None) -> None:
+def build(folder: Path, on_line=None, encoding='utf-8', creationflags=0, log_path=None, dlss=None) -> None:
     """Runs the setup in `folder` (no console window) and passes each output line to `on_line`, keeping the whole
-    output in `log_path` when one is given. Its stdin gets CONSENT and is closed: that answers the download
-    question, and every later question (the per-game installer's) finds no answer. Raises FetchError unless it
-    ends with the network built (BUILT in the release folder). The setup builds only what the folder is missing
-    (HelixSR's own scripts do): a folder whose network is built does not get a new BUILT record, so one that is
-    already there is kept."""
+    output in `log_path` when one is given. Its stdin is closed, so no question (the per-game installer's) finds an
+    answer. `dlss` is the DLSS DLL it builds from (fetch_dlss), needed unless `folder` is built already. Raises
+    FetchError unless it ends with the network built (BUILT in the release folder). The setup builds only what the
+    folder is missing (HelixSR's own scripts do): a folder whose network is built does not get a new BUILT record,
+    so one that is already there is kept."""
     folder = Path(folder)
     log = SetupLog(log_path, on_line)
     if not built(folder):  # a file of an earlier build must not pass for this one; the build's own record is kept
         (folder / BUILT).unlink(missing_ok=True)
+    command = setup_command(None if built(folder) else dlss)
     try:
-        process = subprocess.Popen(setup_command(), cwd=str(folder), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        process = subprocess.Popen(command, cwd=str(folder), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, creationflags=creationflags)
     except OSError as error:
         raise FetchError(f'could not start PowerShell: {error}')
-    try:
-        process.stdin.write(CONSENT)
-        process.stdin.close()
-    except OSError:  # the setup already ended: its exit code says why
-        pass
     timer = threading.Timer(BUILD_TIMEOUT, process.kill)
     timer.start()
-    log.start(f"HelixSR's setup: {' '.join(setup_command())} (in {folder})")
+    log.start(f"HelixSR's setup: {' '.join(command)} (in {folder})")
     tail = []
     try:
         for raw in iter(process.stdout.readline, b''):
@@ -288,11 +324,17 @@ def build(folder: Path, on_line=None, encoding='utf-8', creationflags=0, log_pat
 def install(target: Path, progress=None, on_line=None, encoding='utf-8', creationflags=0, force=False) -> Path:
     """Fetch (unless the folder is already extracted and `force` is off), then build. Returns the folder. The
     setup's output is kept in `target` as SETUP_LOG, and `fetch` records there which pinned zip the files came
-    from (PACKAGE), so a bug report has both."""
+    from (PACKAGE), so a bug report has both. NVIDIA's DLSS DLL is fetched for the build and deleted after it, a
+    failed one too; a folder whose network is built needs none."""
     if force or not extracted(target):
         fetch(target, progress)
     folder = install_folder(target)
-    build(folder, on_line, encoding, creationflags, Path(target) / SETUP_LOG)
+    dlss = None if built(folder) else fetch_dlss(target, progress)
+    try:
+        build(folder, on_line, encoding, creationflags, Path(target) / SETUP_LOG, dlss=dlss)
+    finally:
+        if dlss:
+            drop_dlss(dlss)
     return folder
 
 
@@ -300,13 +342,13 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--dir', type=Path, default=None, help='target folder (default: the port\'s helixsr folder)')
     parser.add_argument('--yes', action='store_true',
-                        help="agree that the setup downloads NVIDIA's DLSS 310.7.0 DLL under NVIDIA's license "
-                             '(https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt)')
+                        help=f"agree that NVIDIA's DLSS 310.7.0 DLL is downloaded under NVIDIA's license "
+                             f'({NVIDIA_LICENSE_URL}) and given to HelixSR\'s setup')
     args = parser.parse_args(argv)
     if not args.yes:
-        print("fetch_helixsr: HelixSR's setup downloads NVIDIA's DLSS DLL under NVIDIA's license "
-              '(https://github.com/NVIDIA/DLSS/blob/v310.7.0/LICENSE.txt), builds the network on this PC and '
-              'deletes the DLL. Run again with --yes to agree.', file=sys.stderr)
+        print(f"fetch_helixsr: this downloads NVIDIA's DLSS DLL under NVIDIA's license ({NVIDIA_LICENSE_URL}), "
+              'gives it to HelixSR\'s setup, which builds the network on this PC, and deletes the DLL. '
+              'Run again with --yes to agree.', file=sys.stderr)
         return 1
     last = [-1]
 
