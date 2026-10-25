@@ -4,6 +4,12 @@ All notable changes to the Windows fork of the Bloodborne PS4 port. The format f
 
 The release pages for 1.6 to 1.6.15 were deleted on 2026-10-09. The git tags remain, and this file replaces their notes. Version 1.6.9 is folded into 1.6.10 (see there).
 
+## [1.8.0-beta.7] - 2026-10-24
+
+### Fixed
+
+- On some Windows PCs the update check, **Install HelixSR** and the FSR 4 download failed with `CERTIFICATE_VERIFY_FAILED ... unable to get local issuer certificate`. GitHub now uses root certificates (USERTrust ECC for its API, ISRG Root X1 for release downloads) that Windows downloads only when a Windows program first asks for them. The launcher's Python never asks, so it saw no root to trust. The launcher now also trusts Mozilla's root list from [certifi](https://github.com/certifi/python-certifi) (MPL-2.0, shipped unmodified, its license in `licenses`), next to the Windows store.
+
 ## [1.8.0-beta.6] - 2026-10-19
 
 ### Changed
