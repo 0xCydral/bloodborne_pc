@@ -25,8 +25,9 @@ if [[ ! -x out/pyenv/Scripts/python.exe ]]; then
     "$python" -m venv out/pyenv
 fi
 # Only when missing: pip asks PyPI on every call and hangs for minutes without a connection.
-out/pyenv/Scripts/python.exe -c 'import PyInstaller, PIL' 2>/dev/null ||
-    out/pyenv/Scripts/python.exe -m pip install -q --disable-pip-version-check pyinstaller pillow
+# certifi: the root CAs a Windows store may not have cached yet (install_trust in the launcher).
+out/pyenv/Scripts/python.exe -c 'import PyInstaller, PIL, certifi' 2>/dev/null ||
+    out/pyenv/Scripts/python.exe -m pip install -q --disable-pip-version-check pyinstaller pillow certifi
 # The scripts run inside BLauncher.exe (--script): the standard modules they import come along.
 hidden=()
 for module in argparse base64 collections hashlib json re shutil struct tempfile xml.etree.ElementTree \
@@ -38,6 +39,9 @@ out/pyenv/Scripts/python.exe -m PyInstaller --noconfirm --clean --log-level WARN
     --workpath out/pyi-work --specpath out/pyi-work --paths "$(cygpath -w "$PWD/scripts")" \
     --paths "$(cygpath -w "$PWD/tools")" --hidden-import fetch_fsr4vk --hidden-import fetch_helixsr --hidden-import bbport_icons "${hidden[@]}" \
     "$(cygpath -w "$PWD/launcher/bbport_launcher_win.py")"
+# Without certifi's roots a PC that never cached GitHub's cannot update or download HelixSR: no package then.
+[[ -f out/pyi-dist/BLauncher/_internal/certifi/cacert.pem ]] ||
+    { echo "BLauncher lacks certifi/cacert.pem (pip install certifi into out/pyenv)" >&2; exit 1; }
 
 # PkgTool (maxton/LibOrbisPkg v0.2, LGPL-3.0, shipped unmodified) extracts the game from the .pkg files the
 # launcher's "Install from PKG" takes. The zip is cached in out/pkgtool-cache, so rebuilds work offline.
@@ -149,6 +153,8 @@ cp "$fsr_vulkan/LICENSE.txt" "$dest/licenses/FireBurn-FSR-Vulkan-LICENSE.txt"
 mkdir -p "$dest/bin/pkgtool" "$dest/licenses"
 cp out/pkgtool/PkgTool.exe out/pkgtool/LibOrbisPkg.dll "$dest/bin/pkgtool/"
 cp out/pkgtool/LICENSE.txt "$dest/licenses/PkgTool-LICENSE.txt"
+# certifi (MPL-2.0, Mozilla's root CA list) is inside BLauncher, unmodified: its license goes with it.
+out/pyenv/Scripts/python.exe -c "import importlib.metadata as m, sys; d = m.distribution('certifi'); f = next(p for p in d.files if p.name.startswith('LICENSE')); sys.stdout.write(open(d.locate_file(f), encoding='utf-8').read())" > "$dest/licenses/certifi-LICENSE.txt"
 # ReShade: the DLL, our layer manifest (it names the layer the launcher enables), its settings, only the
 # effects the presets use, the presets, and the licence of each. textures and screenshots hold a note
 # so the folders exist in the zip (ReShade saves screenshots into one and does not create it).

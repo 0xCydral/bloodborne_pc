@@ -43,7 +43,7 @@ jobs:
       - name: Tests
         shell: pwsh
         run: |
-          python -m pip install -q pytest pillow
+          python -m pip install -q pytest pillow certifi
           python -m pytest -q tests
 
       - name: Build

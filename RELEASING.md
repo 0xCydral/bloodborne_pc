@@ -72,7 +72,7 @@ Run these in order. Stop at the first failure and fix it before you go on.
 5. **Package.** Run `packaging/windows/package.sh`. It writes `dist/bbport-windows.zip`.
 6. **Check the zip.**
    - It holds no game files (no `eboot.bin`, no `.pkg`, no dump).
-   - The `licenses` folder is complete: Intel XeSS, NVIDIA DLSS, ReShade, PkgTool, AMD FidelityFX SDK and FireBurn FSR-Vulkan.
+   - The `licenses` folder is complete: Intel XeSS, NVIDIA DLSS, ReShade, PkgTool, AMD FidelityFX SDK, FireBurn FSR-Vulkan and certifi.
    - `Bloodborne.exe` and `BLauncher.exe` are there.
 7. **Hash.** Run `sha256sum dist/bbport-windows.zip` and put the value in the notes.
 8. **Tag.** Push `develop`, tag the commit from step 1 as `windows-v<version>`, and push the tag.

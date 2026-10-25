@@ -111,6 +111,22 @@ def newest_release(releases, beta):
     return best
 
 
+def install_trust():
+    """Every later urlopen() in this process (the update check, HelixSR and FSR 4 downloads) trusts the Windows store
+    plus certifi's root CAs. Python's ssl sees only the roots Windows already cached and never triggers Windows
+    Update's on-demand root download, so a PC that never met GitHub's current roots (USERTrust ECC for api.github.com,
+    ISRG Root X1 for the release downloads) failed every request with 'unable to get local issuer certificate'.
+    BLauncher.exe carries certifi; from source without it this is the plain Windows store, as before."""
+    import ssl
+    context = ssl.create_default_context()
+    try:
+        import certifi
+        context.load_verify_locations(cafile=certifi.where())
+    except ImportError:
+        pass
+    urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPSHandler(context=context)))
+
+
 def fetch_update_release(beta=False):
     """newest_release() of the releases GitHub lists now (raises OSError or ValueError on a failure).
     The list holds every tag, newest first: it is read page by page until a page has a release this
@@ -4888,6 +4904,7 @@ def install_update(target, wait_pid):
 def main():
     global LANG
     args = sys.argv[1:]
+    install_trust()
     if args and args[0] in ('--run', '--script'):
         sys.exit(run_role(args))
     settings = load_app_settings()
