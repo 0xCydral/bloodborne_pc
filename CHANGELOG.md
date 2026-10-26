@@ -4,6 +4,13 @@ All notable changes to the Windows fork of the Bloodborne PS4 port. The format f
 
 The release pages for 1.6 to 1.6.15 were deleted on 2026-10-09. The git tags remain, and this file replaces their notes. Version 1.6.9 is folded into 1.6.10 (see there).
 
+## [1.8.0-beta.8] - 2026-10-26
+
+### Added
+
+- **Collect logs** on the launcher's Log page (**Advanced > Log**). It saves `bloodborne-logs-<date>.zip` next to `BLauncher.exe` and selects it in Explorer, ready to attach to a bug report. The zip holds `last_run.log` and `previous_run.log`, `bbport.ini`, the launcher's `settings.json`, and `system.txt`: the launcher version, Windows, CPU, RAM, each graphics card with its driver, and what Windows recorded in the last 7 days about crashes and hangs of the game and about graphics driver resets. No game files or saves.
+- Starting the game keeps the log of the run before as `user\previous_run.log`, so a crash's log survives the next start.
+
 ## [1.8.0-beta.7] - 2026-10-24
 
 ### Fixed
