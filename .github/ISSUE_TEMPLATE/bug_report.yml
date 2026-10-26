@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. The file that helps most is `user\last_run.log` in your game folder: it lists your graphics card, driver and settings, and how the game ran. Please attach it below.
+        Thanks for reporting. The file that helps most is the zip from **Collect logs** (launcher, **Advanced > Log**, 1.8.0-beta.8 and later): the game log of the last two runs, your settings, your PC and graphics driver, and the game crashes Windows recorded. On an older launcher, attach `user\last_run.log` from your game folder. Please attach it below.
   - type: input
     id: version
     attributes:
@@ -51,5 +51,5 @@ body:
   - type: textarea
     id: log
     attributes:
-      label: last_run.log
-      description: Drag `user\last_run.log` into this box, or paste its contents.
+      label: Logs
+      description: Drag the `bloodborne-logs-....zip` from Collect logs into this box. On an older launcher, drag `user\last_run.log` or paste its contents.

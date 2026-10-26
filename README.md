@@ -224,7 +224,7 @@ You type the character name on the keyboard, in a box over the game.
 ## Troubleshooting and FAQ
 
 > [!TIP]
-> For any bug report, attach `user\last_run.log` (next to `BLauncher.exe`, or in the saves folder you chose). Say which graphics card you use and what happened. The log starts with your graphics card model, memory and driver.
+> For any bug report, open **Advanced > Log** in the launcher and press **Collect logs** (1.8.0-beta.8 and later). It saves `bloodborne-logs-<date>.zip` next to `BLauncher.exe` and selects it in Explorer. The zip holds the game log of the last two runs, your settings, your PC and graphics driver, and the game crashes Windows recorded in the last 7 days. Attach it, and say which graphics card you use and what happened. On an older launcher, attach `user\last_run.log` (next to `BLauncher.exe`, or in the saves folder you chose).
 
 <details>
 <summary><b>The launcher says it cannot find my game.</b></summary>

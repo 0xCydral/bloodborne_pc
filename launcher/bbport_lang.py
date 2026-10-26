@@ -293,6 +293,10 @@ KEYS = [
     'Xbox',
     'Keyboard and mouse',
     'The buttons the game shows on screen. Automatic follows the controller connected when the game starts: Xbox icons for an Xbox or other controller, PlayStation icons for a PlayStation one, your keys and mouse buttons when none is connected. Changing controllers in the game keeps the icons until the next start. A mod with its own menu/common.tpf.dcx keeps priority.',
+    'Collect logs',
+    'Collecting logs…',
+    'Logs saved to {}. Send this file with your report.',
+    'Could not collect the logs: {}',
 ]
 
 TRANSLATIONS = {
@@ -567,6 +571,10 @@ TRANSLATIONS = {
         'Xbox',
         'لوحة المفاتيح والفأرة',
         'الأزرار التي تعرضها اللعبة على الشاشة. الوضع التلقائي يتبع ذراع التحكم المتصل عند بدء اللعبة: أيقونات Xbox لذراع Xbox أو غيره، وأيقونات PlayStation لذراع PlayStation، ومفاتيحك وأزرار الفأرة عند عدم توصيل أي ذراع. تغيير ذراع التحكم أثناء اللعب يُبقي الأيقونات حتى التشغيل التالي. أي مود يحتوي ملف menu/common.tpf.dcx خاصاً به له الأولوية.',
+        'جمع السجلات',
+        'جارٍ جمع السجلات…',
+        'حُفظت السجلات في {}. أرسل هذا الملف مع بلاغك.',
+        'تعذّر جمع السجلات: {}',
     ],
     'es': [
         'Jugar', 'Gráficos', 'Pantalla y FPS', 'Juego y efectos', 'Mods y parches', 'Avanzado', 'Registro',
@@ -839,6 +847,10 @@ TRANSLATIONS = {
         'Xbox',
         'Teclado y ratón',
         'Los botones que el juego muestra en pantalla. Automático sigue al mando conectado al iniciar el juego: iconos de Xbox para un mando Xbox u otro, de PlayStation para uno de PlayStation, y tus teclas y botones del ratón si no hay ninguno. Si cambias de mando durante la partida, los iconos se mantienen hasta el siguiente inicio. Un mod con su propio menu/common.tpf.dcx tiene prioridad.',
+        'Recopilar registros',
+        'Recopilando registros…',
+        'Registros guardados en {}. Envía este archivo con tu reporte.',
+        'No se pudieron recopilar los registros: {}',
     ],
     'pt': [
         'Jogar', 'Gráficos', 'Tela e FPS', 'Jogo e efeitos', 'Mods e patches', 'Avançado', 'Registro',
@@ -1111,6 +1123,10 @@ TRANSLATIONS = {
         'Xbox',
         'Teclado e mouse',
         'Os botões que o jogo mostra na tela. Automático segue o controle conectado ao iniciar o jogo: ícones do Xbox para um controle Xbox ou outro, do PlayStation para um de PlayStation, e suas teclas e botões do mouse quando nenhum está conectado. Trocar de controle durante o jogo mantém os ícones até a próxima inicialização. Um mod com seu próprio menu/common.tpf.dcx tem prioridade.',
+        'Coletar logs',
+        'Coletando logs…',
+        'Logs salvos em {}. Envie este arquivo com o seu relato.',
+        'Não foi possível coletar os logs: {}',
     ],
     'fr': [
         'Jouer', 'Graphismes', 'Affichage et FPS', 'Jeu et effets', 'Mods et patchs', 'Avancé', 'Journal',
@@ -1383,6 +1399,10 @@ TRANSLATIONS = {
         'Xbox',
         'Clavier et souris',
         'Les boutons que le jeu affiche à l’écran. Automatique suit la manette branchée au lancement du jeu : icônes Xbox pour une manette Xbox ou autre, icônes PlayStation pour une manette PlayStation, et vos touches et boutons de souris s’il n’y en a aucune. Changer de manette en jeu garde les icônes jusqu’au prochain lancement. Un mod avec son propre menu/common.tpf.dcx reste prioritaire.',
+        'Collecter les journaux',
+        'Collecte des journaux…',
+        'Journaux enregistrés dans {}. Envoyez ce fichier avec votre rapport.',
+        'Impossible de collecter les journaux : {}',
     ],
     'de': [
         'Spielen', 'Grafik', 'Anzeige & FPS', 'Spiel & Effekte', 'Mods & Patches', 'Erweitert', 'Protokoll',
@@ -1655,6 +1675,10 @@ TRANSLATIONS = {
         'Xbox',
         'Tastatur und Maus',
         'Die Tasten, die das Spiel auf dem Bildschirm zeigt. Automatisch folgt dem beim Spielstart verbundenen Controller: Xbox-Symbole für einen Xbox- oder anderen Controller, PlayStation-Symbole für einen PlayStation-Controller, deine Tasten und Maustasten, wenn keiner verbunden ist. Ein Controllerwechsel im Spiel behält die Symbole bis zum nächsten Start. Eine Mod mit eigener menu/common.tpf.dcx hat Vorrang.',
+        'Protokolle sammeln',
+        'Protokolle werden gesammelt…',
+        'Protokolle gespeichert unter {}. Sende diese Datei mit deinem Bericht.',
+        'Die Protokolle konnten nicht gesammelt werden: {}',
     ],
     'it': [
         'Gioca', 'Grafica', 'Schermo e FPS', 'Gioco ed effetti', 'Mod e patch', 'Avanzate', 'Registro',
@@ -1927,6 +1951,10 @@ TRANSLATIONS = {
         'Xbox',
         'Tastiera e mouse',
         'I pulsanti che il gioco mostra a schermo. Automatico segue il controller collegato all’avvio del gioco: icone Xbox per un controller Xbox o altro, icone PlayStation per uno PlayStation, i tuoi tasti e pulsanti del mouse se non ce n’è nessuno. Cambiare controller durante il gioco mantiene le icone fino al prossimo avvio. Una mod con un proprio menu/common.tpf.dcx ha la precedenza.',
+        'Raccogli i log',
+        'Raccolta dei log…',
+        'Log salvati in {}. Invia questo file con la tua segnalazione.',
+        'Impossibile raccogliere i log: {}',
     ],
     'pl': [
         'Graj', 'Grafika', 'Ekran i FPS', 'Gra i efekty', 'Mody i łatki', 'Zaawansowane', 'Dziennik',
@@ -2199,6 +2227,10 @@ TRANSLATIONS = {
         'Xbox',
         'Klawiatura i mysz',
         'Przyciski pokazywane w grze na ekranie. Automatycznie podąża za kontrolerem podłączonym przy starcie gry: ikony Xbox dla kontrolera Xbox lub innego, ikony PlayStation dla kontrolera PlayStation, a gdy żadnego nie ma, Twoje klawisze i przyciski myszy. Zmiana kontrolera w trakcie gry zachowuje ikony do następnego uruchomienia. Mod z własnym plikiem menu/common.tpf.dcx ma pierwszeństwo.',
+        'Zbierz logi',
+        'Zbieranie logów…',
+        'Logi zapisano w {}. Wyślij ten plik razem ze zgłoszeniem.',
+        'Nie udało się zebrać logów: {}',
     ],
     'tr': [
         'Oyna', 'Grafik', 'Ekran ve FPS', 'Oyun ve efektler', 'Modlar ve yamalar', 'Gelişmiş', 'Günlük',
@@ -2471,6 +2503,10 @@ TRANSLATIONS = {
         'Xbox',
         'Klavye ve fare',
         'Oyunun ekranda gösterdiği düğmeler. Otomatik, oyun başlarken bağlı olan oyun koluna uyar: Xbox veya başka bir kol için Xbox simgeleri, PlayStation kolu için PlayStation simgeleri, hiçbiri bağlı değilse atadığınız tuşlar ve fare düğmeleri. Oyun sırasında kol değiştirmek simgeleri bir sonraki başlangıca kadar korur. Kendi menu/common.tpf.dcx dosyası olan bir mod önceliklidir.',
+        'Günlükleri topla',
+        'Günlükler toplanıyor…',
+        'Günlükler {} konumuna kaydedildi. Bu dosyayı raporunla birlikte gönder.',
+        'Günlükler toplanamadı: {}',
     ],
     'zh': [
         '开始', '图形', '显示与帧率', '游戏与效果', '模组与补丁', '高级', '日志',
@@ -2743,6 +2779,10 @@ TRANSLATIONS = {
         'Xbox',
         '键盘和鼠标',
         '游戏在屏幕上显示的按键。“自动”跟随游戏启动时连接的手柄：Xbox 手柄或其他手柄显示 Xbox 图标，PlayStation 手柄显示 PlayStation 图标，未连接手柄时显示你绑定的键盘按键和鼠标按键。游戏中更换手柄时，图标会保持到下次启动。自带 menu/common.tpf.dcx 的 Mod 优先。',
+        '收集日志',
+        '正在收集日志…',
+        '日志已保存到 {}。请将此文件随报告一起发送。',
+        '无法收集日志：{}',
     ],
     'ja': [
         'プレイ', 'グラフィック', '表示とFPS', 'ゲームとエフェクト', 'MODとパッチ', '詳細設定', 'ログ',
@@ -3015,6 +3055,10 @@ TRANSLATIONS = {
         'Xbox',
         'キーボードとマウス',
         'ゲームが画面に表示するボタンです。「自動」はゲーム起動時に接続されているコントローラーに合わせます。Xbox またはその他のコントローラーなら Xbox のアイコン、PlayStation のコントローラーなら PlayStation のアイコン、接続がなければ割り当てたキーとマウスボタンを表示します。ゲーム中にコントローラーを替えても、次の起動までアイコンは変わりません。独自の menu/common.tpf.dcx を持つ Mod が優先されます。',
+        'ログを収集',
+        'ログを収集中…',
+        'ログを {} に保存しました。このファイルを報告と一緒に送ってください。',
+        'ログを収集できませんでした: {}',
     ],
     'ko': [
         '플레이', '그래픽', '디스플레이 및 FPS', '게임 및 효과', '모드 및 패치', '고급', '로그',
@@ -3287,6 +3331,10 @@ TRANSLATIONS = {
         'Xbox',
         '키보드와 마우스',
         '게임이 화면에 표시하는 버튼입니다. 자동은 게임을 시작할 때 연결된 컨트롤러를 따릅니다. Xbox 또는 기타 컨트롤러는 Xbox 아이콘, PlayStation 컨트롤러는 PlayStation 아이콘, 연결된 컨트롤러가 없으면 지정한 키와 마우스 버튼을 표시합니다. 게임 중에 컨트롤러를 바꿔도 아이콘은 다음 시작까지 유지됩니다. 자체 menu/common.tpf.dcx가 있는 모드가 우선합니다.',
+        '로그 수집',
+        '로그 수집 중…',
+        '로그를 {}에 저장했습니다. 보고할 때 이 파일을 함께 보내 주세요.',
+        '로그를 수집하지 못했습니다: {}',
     ],
 }
 

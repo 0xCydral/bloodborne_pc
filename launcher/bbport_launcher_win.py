@@ -13,6 +13,7 @@ Frozen with PyInstaller (packaging/windows/package.sh) the same BLauncher.exe al
 game without the window (`--play`), run.py (`--run`) and the preparation scripts (`--script`),
 so a packaged port needs no Python installation.
 """
+import base64
 import collections
 import ctypes
 import json
@@ -3586,6 +3587,7 @@ class Launcher:
         self.label(top, _('Log', 'Журнал'), 'h1', bg=PANEL).pack(side='left')
         self.button(top, _('Copy', 'Копировать'), self.copy_log, bg=PANEL).pack(side='right')
         self.button(top, _('Clear', 'Очистить'), lambda: self.set_log(''), bg=PANEL).pack(side='right', padx=px(8))
+        self.button(top, _('Collect logs', 'Собрать журналы'), self.save_logs, bg=PANEL).pack(side='right')
         frame = tk.Frame(page, bg=FIELD, highlightthickness=1, highlightbackground=LINE)
         frame.pack(fill='both', expand=True, padx=px(32), pady=(0, px(20)))
         self.log = tk.Text(frame, wrap='none', bg=FIELD, fg='#cfc6b8', insertbackground=TEXT, relief='flat',
@@ -4125,6 +4127,29 @@ class Launcher:
     def copy_log(self):
         self.root.clipboard_clear()
         self.root.clipboard_append(self.log.get('1.0', 'end'))
+
+    def save_logs(self):
+        """Collect logs: collect_logs() off the window's thread, then the zip selected in Explorer."""
+        self.append('\n' + _('Collecting logs…', 'Сбор журналов…') + '\n')
+        user_dir = Path(self.app.get('user_dir') or DATA_DIR / 'user')
+        threading.Thread(target=self.write_logs, args=(user_dir,), daemon=True).start()
+
+    def write_logs(self, user_dir):
+        try:
+            path = collect_logs(user_dir)
+        except OSError as error:
+            text = _('Could not collect the logs: {}', 'Не удалось собрать журналы: {}').format(error)
+            self.ui_calls.put(lambda: self.append(text + '\n'))
+            return
+        self.ui_calls.put(lambda: self.logs_saved(path))
+
+    def logs_saved(self, path):
+        self.append(_('Logs saved to {}. Send this file with your report.',
+                      'Журналы сохранены в {}. Отправьте этот файл вместе с отчётом.').format(path) + '\n')
+        try:
+            subprocess.Popen(['explorer', '/select,', str(path)])
+        except OSError:
+            pass
 
     def open_path(self, path, key=None):
         if key == 'user_dir' and not path:
@@ -4722,9 +4747,67 @@ def start_game(command, env, log_path):
     launcher would break when the launcher closes: the preparation fails with Errno 22 on its next
     message and the game's log is lost. A file keeps filling, in-game restarts included."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    try:  # Collect logs sends the run before too: a player often starts the game again before reporting a crash
+        os.replace(log_path, log_path.with_name('previous_run.log'))
+    except OSError:
+        pass
     with open(log_path, 'wb') as log:
         return subprocess.Popen(command, cwd=PORT_DIR, env=env, stdin=subprocess.DEVNULL, stdout=log,
                                 stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+
+
+# What Windows knows of the PC and of the game's crashes, for Collect logs: one fact per line.
+WINDOWS_REPORT = '''
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+$ProgressPreference = 'SilentlyContinue'
+$os = Get-CimInstance Win32_OperatingSystem
+"Windows: $($os.Caption) $($os.Version) (build $($os.BuildNumber))"
+"RAM: {0:N1} GB" -f ($os.TotalVisibleMemorySize / 1MB)
+Get-CimInstance Win32_Processor | ForEach-Object { "CPU: $($_.Name.Trim())" }
+Get-CimInstance Win32_VideoController | ForEach-Object { "GPU: $($_.Name), driver $($_.DriverVersion) ($($_.DriverDate))" }
+$since = (Get-Date).AddDays(-7)
+''
+'== Crashes and hangs of the game (Windows Application log, last 7 days)'
+Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000,1001,1002; StartTime=$since} -ErrorAction SilentlyContinue |
+    Where-Object { $_.ProviderName -in 'Application Error','Windows Error Reporting','Application Hang' -and
+                   $_.Message -match 'bb-probe|BLauncher|Bloodborne' } |
+    Select-Object -First 20 | Format-List TimeCreated, ProviderName, Id, Message
+'== Graphics driver resets (Windows System log, last 7 days)'
+Get-WinEvent -FilterHashtable @{LogName='System'; Id=4101,13,14,153; StartTime=$since} -ErrorAction SilentlyContinue |
+    Where-Object { $_.ProviderName -in 'Display','nvlddmkm','amdkmdag','amdwddmg' } |
+    Select-Object -First 20 | Format-List TimeCreated, ProviderName, Id, Message
+'''
+
+
+def windows_report():
+    """WINDOWS_REPORT's answer, or why PowerShell could not give it. Encoded, so no quoting can break it."""
+    script = base64.b64encode(WINDOWS_REPORT.encode('utf-16-le')).decode('ascii')
+    try:
+        result = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-EncodedCommand', script],
+                                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120,
+                                creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f'PowerShell could not run: {error}\n'
+    errors = f'\nPowerShell exit {result.returncode}: {result.stderr.strip()}\n' if result.stderr.strip() else ''
+    return result.stdout + errors
+
+
+def collect_logs(user_dir, folder=None):
+    """bloodborne-logs-<time>.zip in FOLDER (the port's folder): the game log of the last run and of the one
+    before, bbport.ini, settings.json and system.txt (launcher version, the PC, graphics drivers, the crashes
+    Windows recorded). Never game files or saves. Returns its path. PowerShell is slow: run it off the window's thread."""
+    files = {'last_run.log': Path(user_dir) / 'last_run.log', 'previous_run.log': Path(user_dir) / 'previous_run.log',
+             'bbport.ini': ini_path(), 'settings.json': CONFIG_FILE}
+    lines = [f'Launcher {VERSION}', f'Collected {time.strftime("%Y-%m-%d %H:%M:%S")}']
+    path = Path(folder or DATA_DIR) / f'bloodborne-logs-{time.strftime("%Y%m%d-%H%M%S")}.zip'
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as bundle:
+        for name, source in files.items():
+            try:
+                bundle.write(source, name)
+            except OSError as error:
+                lines.append(f'{name}: missing ({error.strerror or error})')
+        bundle.writestr('system.txt', '\n'.join(lines) + '\n\n' + windows_report())
+    return path
 
 
 def follow_log(path, finished, emit, interval=0.05, retries=5):
