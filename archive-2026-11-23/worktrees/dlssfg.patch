@@ -1,0 +1,6 @@
+diff --git a/gpu/third_party/fsr-vulkan b/gpu/third_party/fsr-vulkan
+--- a/gpu/third_party/fsr-vulkan
++++ b/gpu/third_party/fsr-vulkan
+@@ -1 +1 @@
+-Subproject commit c64f093404125e960813f95f1996c14780f0dd69
++Subproject commit c64f093404125e960813f95f1996c14780f0dd69-dirty

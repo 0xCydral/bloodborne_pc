@@ -1,0 +1,15 @@
+diff --git a/odd/tasks/collect-logs.md b/odd/tasks/collect-logs.md
+index 597c4b3..838439f 100644
+--- a/odd/tasks/collect-logs.md
++++ b/odd/tasks/collect-logs.md
+@@ -17,7 +17,9 @@ module) was never collected.
+ - [x] T2 `start_game()` keeps the run before as `previous_run.log`.
+ - [x] T3 **Collect logs** button: off the window's thread, the result line in the log, the zip selected in Explorer.
+ - [x] T4 Texts in all 11 translation tables; README tip and bug report template point to the zip.
+-- [x] T5 Release 1.8.0-beta.8.
++- [ ] T5 Release 1.8.0-beta.8. `develop` (bd8b622) and the tag are pushed, but GitHub started no build: a
++  workflow dispatch answers HTTP 422 "Actions has been disabled for this repository" (2026-10-26), while
++  `actions/permissions` still reads `enabled: true`. Blocked until the owner turns Actions back on.
+ 
+ ## Verification
+ 
